@@ -1,5 +1,4 @@
 import { type Address, createPublicClient, erc20Abi, http } from "viem";
-import { mainnet } from "viem/chains";
 import { z } from "zod";
 import type { ApiParser } from "./ApiParser/ApiParser";
 import type { BrowserFetcher } from "./browser-fetch";
@@ -10,6 +9,7 @@ import { TokensRepository } from "./db/repositories/TokensRepository";
 import { fetchHtml } from "./fetch-html";
 import type { HtmlParser } from "./HtmlParser/HtmlParser";
 import { ProgressBar } from "./ProgressBar";
+import { getRpcUrls } from "./rpc-config";
 import { sleep } from "./utils/sleep";
 
 type AllLabels = {
@@ -125,24 +125,27 @@ export class ChainPuller {
   async #fetchErc20Metadata(
     address: Address,
   ): Promise<{ name: string | null; symbol: string | null }> {
-    const rpcUrl = process.env.ETHEREUM_RPC;
-    if (!rpcUrl) return { name: null, symbol: null };
+    const rpcUrls = getRpcUrls(this.#chain.chainId);
 
-    const client = createPublicClient({
-      chain: mainnet,
-      transport: http(rpcUrl),
-    });
+    for (const rpcUrl of rpcUrls) {
+      try {
+        const client = createPublicClient({ transport: http(rpcUrl) });
+        const [name, symbol] = await Promise.all([
+          client
+            .readContract({ address, abi: erc20Abi, functionName: "name" })
+            .catch(() => null),
+          client
+            .readContract({ address, abi: erc20Abi, functionName: "symbol" })
+            .catch(() => null),
+        ]);
+        if (name || symbol)
+          return { name: name ?? null, symbol: symbol ?? null };
+      } catch {
+        // try next rpc
+      }
+    }
 
-    const [name, symbol] = await Promise.all([
-      client
-        .readContract({ address, abi: erc20Abi, functionName: "name" })
-        .catch(() => null),
-      client
-        .readContract({ address, abi: erc20Abi, functionName: "symbol" })
-        .catch(() => null),
-    ]);
-
-    return { name: name ?? null, symbol: symbol ?? null };
+    return { name: null, symbol: null };
   }
 
   async #writeTokens(tokenRows: TokenRows, label: string) {
