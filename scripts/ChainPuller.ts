@@ -202,13 +202,13 @@ export class ChainPuller {
         chainId: this.#chain.chainId,
         address: accountRow.address,
         label: label,
-        nameTag: accountRow.nameTag,
+        nameTag: accountRow.nameTag ?? "",
       };
       try {
         await AccountsRepository.insertAccount(newAccount);
       } catch (e) {
         console.warn("issue inserting account ", newAccount);
-        // console.log(e)
+        console.warn(e);
       }
     }
   }
@@ -256,6 +256,8 @@ export class ChainPuller {
   }
 
   public async pullAndWriteAllLabels() {
+    const scrapeStartedAt = new Date().toISOString();
+    console.log(`\n🕐 Scrape started at ${scrapeStartedAt}`);
     const labels = await this.#pullAllLabels();
     console.log(`\n🐢 Pulling tokens...`);
     this.#progressBar.start(labels.tokens.length);
