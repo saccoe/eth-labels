@@ -61,6 +61,7 @@
     "*": "prettier -u --write"
   },
   "dependencies": {
+    "@aws-sdk/client-sqs": "^3.1007.0",
     "@elysiajs/swagger": "^1.0.5",
     "@modelcontextprotocol/sdk": "^1.25.3",
     "elysia": "^1.0.25",
