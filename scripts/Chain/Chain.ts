@@ -17,6 +17,7 @@ export class Chain<T extends ApiParser, T2 extends HtmlParser> {
     celo: 42220,
     bscscan: 56,
     gnosis: 100,
+    polygonscan: 137,
   };
 
   public constructor(
