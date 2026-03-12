@@ -81,12 +81,21 @@ export class BrowserFetcher {
     if (!this.#page || !this.#ready)
       throw new Error("BrowserFetcher not initialized");
 
-    const result = await this.#page.evaluate(async (fetchUrl: string) => {
-      const res = await fetch(fetchUrl);
-      return { status: res.status, text: await res.text() };
-    }, url);
+    let result: { status: number; text: string } | null = null;
+    try {
+      result = await this.#page.evaluate(async (fetchUrl: string) => {
+        const res = await fetch(fetchUrl);
+        return { status: res.status, text: await res.text() };
+      }, url);
+    } catch {
+      // fetch() threw (e.g. CORS error from cross-origin context) — fall through to navigation
+    }
 
-    if (result.status !== 200 || result.text.includes("Just a moment...")) {
+    if (
+      !result ||
+      result.status !== 200 ||
+      result.text.includes("Just a moment...")
+    ) {
       // Navigate directly to the page to pass Cloudflare challenge
       await this.#page.goto(url, { waitUntil: "networkidle2", timeout: 60000 });
 
