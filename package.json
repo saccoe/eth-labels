@@ -11,6 +11,7 @@
     "test": "concurrently -g -n \"eslint,test:unit,build\" -c \"#341BAB,#A6CC66,#3077C6\" \"bun run lint\" \"bun run test:unit\" \"bun run build\"",
     "lint": "eslint . --fix --cache",
     "build": "bun run tsc",
+    "chrome": "bun run scripts/launch-chrome.ts",
     "pull": "bun run scripts/fetch-all.ts",
     "export": "bun run scripts/db/generate-db-json.ts",
     "prepare": "husky || true",

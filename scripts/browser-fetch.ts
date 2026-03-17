@@ -1,44 +1,10 @@
-import { spawn } from "child_process";
 import { homedir } from "os";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import { z } from "zod";
 
-const CHROME_BIN =
-  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const CDP_PORT = 9222;
-
 function getChromeUserDataDir(): string {
   const raw = process.env["CHROME_USER_DATA_DIR"] ?? "~/.chrome-eth-labels";
   return raw.startsWith("~") ? raw.replace("~", homedir()) : raw;
-}
-
-async function isChromeRunning(): Promise<boolean> {
-  try {
-    const resp = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`);
-    return resp.ok;
-  } catch {
-    return false;
-  }
-}
-
-async function launchChrome(): Promise<void> {
-  const userDataDir = getChromeUserDataDir();
-  console.log(`  🚀 Launching Chrome with profile: ${userDataDir}`);
-  spawn(
-    CHROME_BIN,
-    [`--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${userDataDir}`],
-    {
-      detached: true,
-      stdio: "ignore",
-    },
-  ).unref();
-
-  // Wait until CDP is accepting connections
-  for (let i = 0; i < 20; i++) {
-    await new Promise((r) => setTimeout(r, 500));
-    if (await isChromeRunning()) return;
-  }
-  throw new Error("Chrome launched but CDP did not become available");
 }
 
 /**
@@ -61,10 +27,6 @@ export class BrowserFetcher {
    * Connect to a running Chrome instance and prepare for fetching.
    */
   public async init(): Promise<void> {
-    if (!(await isChromeRunning())) {
-      await launchChrome();
-    }
-
     const endpoints = [
       "http://127.0.0.1:18800/json/version", // Clawdbot managed browser
       "http://127.0.0.1:9222/json/version", // Standard Chrome DevTools
@@ -112,10 +74,28 @@ export class BrowserFetcher {
       }
     }
 
+    const userDataDir = getChromeUserDataDir();
     throw new Error(
-      "No Chrome instance found. Start Clawdbot or launch Chrome with:\n" +
-        "  /Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=9222",
+      "No Chrome instance found. Launch Chrome in a separate terminal with:\n" +
+        `  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --remote-debugging-port=9222 --user-data-dir="${userDataDir}"`,
     );
+  }
+
+  #isConnectionError(e: unknown): boolean {
+    const msg = e instanceof Error ? e.message : String(e);
+    return (
+      msg.includes("detached") ||
+      msg.includes("Target closed") ||
+      msg.includes("Session closed")
+    );
+  }
+
+  async #reconnect(): Promise<void> {
+    console.log("  🔄 Browser connection lost — reconnecting...");
+    this.#ready = false;
+    this.#page = null;
+    this.#browser = null;
+    await this.init();
   }
 
   /**
@@ -131,8 +111,9 @@ export class BrowserFetcher {
         const res = await fetch(fetchUrl);
         return { status: res.status, text: await res.text() };
       }, url);
-    } catch {
-      // fetch() threw (e.g. CORS error from cross-origin context) — fall through to navigation
+    } catch (e) {
+      if (this.#isConnectionError(e)) await this.#reconnect();
+      // fall through to navigation
     }
 
     if (
@@ -141,7 +122,22 @@ export class BrowserFetcher {
       result.text.includes("Just a moment...")
     ) {
       // Navigate directly to the page to pass Cloudflare challenge
-      await this.#page.goto(url, { waitUntil: "networkidle2", timeout: 60000 });
+      try {
+        await this.#page.goto(url, {
+          waitUntil: "networkidle2",
+          timeout: 60000,
+        });
+      } catch (e) {
+        if (this.#isConnectionError(e)) {
+          await this.#reconnect();
+          await this.#page.goto(url, {
+            waitUntil: "networkidle2",
+            timeout: 60000,
+          });
+        } else {
+          throw e;
+        }
+      }
 
       // Wait for Cloudflare if needed
       const title = await this.#page.title();
