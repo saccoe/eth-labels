@@ -7,17 +7,10 @@ How to publish label data to the SQS ingestion queue.
 Set the required env vars and run the send script. You will be prompted to select which chains to send:
 
 ```bash
-SQS_LABEL_QUEUE_URL=https://sqs.us-east-1.amazonaws.com/123456789/queue \
-AWS_REGION=us-east-1 \
 bun run scripts/sqs/send-labels-to-sqs.ts
 ```
 
-Or add them to your `.env` file:
-
-```
-SQS_LABEL_QUEUE_URL=https://sqs.us-east-1.amazonaws.com/123456789/queue
-AWS_REGION=us-east-1
-```
+Or add the required env vars to your `.env` file (see Queue Configuration below).
 
 The script will:
 
@@ -28,35 +21,37 @@ The script will:
 
 Labels are scraped and written to SQLite via `bun run pull`. Re-scraping a chain bumps `updated_at` on all seen rows — rows with stale `updated_at` after a scrape were removed from Etherscan.
 
+## Local Testing (LocalStack)
+
+Queue URL for local development:
+
+```
+SQS_LABEL_QUEUE_URL=http://sqs.us-east-2.localhost.localstack.cloud:4566/000000000000/label-ingestion-queue
+AWS_REGION=us-east-2
+AWS_ACCESS_KEY_ID=test
+AWS_SECRET_ACCESS_KEY=test
+```
+
 ## Queue Configuration
 
-| Env Var               | Description |
-| --------------------- | ----------- |
-| `SQS_LABEL_QUEUE_URL` | Queue URL   |
-| `AWS_REGION`          | AWS region  |
+| Env Var               | Description                          |
+| --------------------- | ------------------------------------ |
+| `SQS_LABEL_QUEUE_URL` | Queue URL                            |
+| `AWS_REGION`          | AWS region                           |
+| `SQS_ENDPOINT`        | LocalStack endpoint (local dev only) |
 
 ## Message Envelope
 
-Every message must be wrapped in this envelope:
+Every message is wrapped in this envelope:
 
 ```json
 {
   "id": "<uuid-v4>",
   "type": "DUNE_LABELS",
-  "payload": { ... },
-  "timestamp": "2026-03-11T00:00:00.000Z"
+  "timestamp": "2026-03-17T10:30:00.000Z",
+  "payload": { ... }
 }
 ```
-
-## Message Attributes
-
-Include these SQS message attributes on every send:
-
-| Attribute     | Type   | Example                |
-| ------------- | ------ | ---------------------- |
-| `messageType` | String | `DUNE_LABELS`          |
-| `eventType`   | String | `label.batch.ingested` |
-| `source`      | String | `your_source_name`     |
 
 ## Event Types
 
@@ -66,6 +61,54 @@ Include these SQS message attributes on every send:
 | `label.ingestion.completed` | Signals end of a full ingestion run |
 | `label.ingestion.failed`    | Signals a failed ingestion run      |
 
+## Chain Resolution
+
+The processor resolves chain in this order:
+
+1. **`labels[].metadata.blockchain`** — Dune's blockchain field (mapped to internal chain)
+2. **`metadata.chain`** — explicit chain on the event metadata
+3. **Address format inference** — fallback when no blockchain metadata is provided
+
+> If `labels[].metadata.blockchain` is set to an unsupported value, the processor **throws an error** to prevent misclassification.
+
+### Internal Chain Identifiers (`metadata.chain`)
+
+| Value    | Chain           |
+| -------- | --------------- |
+| `eth`    | Ethereum        |
+| `pol`    | Polygon         |
+| `arb`    | Arbitrum        |
+| `opt`    | Optimism        |
+| `base`   | Base            |
+| `bsc`    | BNB Smart Chain |
+| `gnosis` | Gnosis          |
+| `celo`   | Celo            |
+| `sol`    | Solana          |
+
+### Dune Blockchain Names (`labels[].metadata.blockchain`)
+
+| Dune value | Maps to internal |
+| ---------- | ---------------- |
+| `ethereum` | `eth`            |
+| `polygon`  | `pol`            |
+| `arbitrum` | `arb`            |
+| `optimism` | `opt`            |
+| `base`     | `base`           |
+| `bnb`      | `bsc`            |
+| `solana`   | `sol`            |
+
+Any other value causes the processor to throw an error.
+
+### Address Format Inference (fallback)
+
+| Address pattern                        | Inferred chain       |
+| -------------------------------------- | -------------------- |
+| Starts with `0x`, exactly 42 chars     | `eth`                |
+| Starts with `0x`, longer than 42 chars | `sui`                |
+| Starts with `EQ` or `UQ`               | `ton`                |
+| 32–44 chars, no `0x` prefix            | `sol`                |
+| Anything else                          | `eth` (with warning) |
+
 ## Payload Schemas
 
 ### `label.batch.ingested`
@@ -73,22 +116,23 @@ Include these SQS message attributes on every send:
 ```json
 {
   "eventType": "label.batch.ingested",
-  "source": "your_source_name",
-  "timestamp": "2026-03-11T00:00:00.000Z",
+  "source": "eth-labels",
+  "timestamp": "2026-03-17T10:30:00.000Z",
   "metadata": {
     "runId": "<uuid-v4>",
-    "totalLabels": 2,
+    "totalLabels": 100,
     "batchNumber": 1,
+    "totalBatches": 5,
     "chain": "eth"
   },
   "labels": [
     {
       "address": "0x...",
-      "label": "DEX Trader",
-      "category": "trading",
-      "confidence": 0.95,
-      "source": "your_source_name",
-      "metadata": {}
+      "label": "wintermute",
+      "source": "eth-labels",
+      "metadata": {
+        "chainId": 1
+      }
     }
   ]
 }
@@ -99,13 +143,13 @@ Include these SQS message attributes on every send:
 ```json
 {
   "eventType": "label.ingestion.completed",
-  "source": "your_source_name",
-  "timestamp": "2026-03-11T00:00:00.000Z",
+  "source": "eth-labels",
+  "timestamp": "2026-03-17T10:30:00.000Z",
   "metadata": {
     "runId": "<uuid-v4>",
-    "totalLabels": 100,
-    "totalLabelsIngested": 98,
-    "totalBatches": 10,
+    "totalLabels": 3305,
+    "totalLabelsIngested": 3305,
+    "totalBatches": 34,
     "durationMs": 5200
   }
 }
@@ -116,35 +160,12 @@ Include these SQS message attributes on every send:
 ```json
 {
   "eventType": "label.ingestion.failed",
-  "source": "your_source_name",
-  "timestamp": "2026-03-11T00:00:00.000Z",
+  "source": "eth-labels",
+  "timestamp": "2026-03-17T10:30:00.000Z",
   "error": "Descriptive error message",
   "metadata": {
     "runId": "<uuid-v4>",
-    "totalLabels": 100
+    "totalLabels": 3305
   }
 }
 ```
-
-## Field Validation Rules
-
-### Label fields
-
-| Field        | Required | Constraints      |
-| ------------ | -------- | ---------------- |
-| `address`    | Yes      | 1–100 chars      |
-| `label`      | Yes      | 1–255 chars      |
-| `source`     | Yes      | 1–100 chars      |
-| `category`   | No       | max 100 chars    |
-| `confidence` | No       | float 0–1        |
-| `metadata`   | No       | free-form object |
-
-### Metadata fields
-
-| Field          | Required | Constraints                |
-| -------------- | -------- | -------------------------- |
-| `runId`        | Yes      | valid UUID v4              |
-| `totalLabels`  | Yes      | positive integer           |
-| `batchNumber`  | No       | positive integer           |
-| `totalBatches` | No       | positive integer           |
-| `chain`        | No       | string (e.g. `eth`, `sol`) |

@@ -2,7 +2,6 @@ import "dotenv/config";
 import { z } from "zod";
 import { getChainConfig } from "../cli";
 import { AccountsRepository } from "../db/repositories/AccountsRepository";
-import { scanConfig } from "../scan-config";
 import { SqsSender } from "./SqsSender";
 import type { BatchPayload, Label } from "./types";
 
@@ -14,11 +13,15 @@ function toLabel(row: {
   label: string;
   chainId: number;
 }): Label {
+  const blockchain = CHAIN_DUNE_NAMES[row.chainId];
   return {
     address: row.address,
     label: row.label,
     source: SOURCE,
-    metadata: { chainId: row.chainId },
+    metadata: {
+      chainId: row.chainId,
+      ...(blockchain ? { blockchain } : {}),
+    },
   };
 }
 
@@ -30,10 +33,30 @@ function chunk<T>(arr: Array<T>, size: number): Array<Array<T>> {
   return chunks;
 }
 
+// Internal chain identifiers used in metadata.chain
+const CHAIN_INTERNAL_NAMES: Record<number, string> = {
+  1: "eth",
+  10: "opt",
+  56: "bsc",
+  100: "gnosis",
+  137: "pol",
+  8453: "base",
+  42161: "arb",
+  42220: "celo",
+};
+
+// Dune blockchain names used in labels[].metadata.blockchain
+const CHAIN_DUNE_NAMES: Record<number, string> = {
+  1: "ethereum",
+  10: "optimism",
+  56: "bnb",
+  137: "polygon",
+  8453: "base",
+  42161: "arbitrum",
+};
+
 function chainNameForId(chainId: number): string {
-  return (
-    scanConfig.find((c) => c.chainId === chainId)?.chainName ?? String(chainId)
-  );
+  return CHAIN_INTERNAL_NAMES[chainId] ?? String(chainId);
 }
 
 async function main() {
