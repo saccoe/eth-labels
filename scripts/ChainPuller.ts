@@ -170,11 +170,11 @@ export class ChainPuller {
   }
 
   async #writeTokens(tokenRows: TokenRows, label: string) {
-    const skipRpc = SECURITY_LABELS.has(label);
+    const shouldSkipRpc = SECURITY_LABELS.has(label);
     for (const tokenRow of tokenRows) {
       let { name, symbol } = tokenRow;
 
-      if (!skipRpc && (!name || !symbol)) {
+      if (!shouldSkipRpc && (!name || !symbol)) {
         const onChain = await this.#fetchErc20Metadata(tokenRow.address);
         name = name ?? onChain.name;
         symbol = symbol ?? onChain.symbol;
@@ -304,8 +304,8 @@ export class ChainPuller {
       );
       console.log(`   Tokens:   ${doneTokens}/${totalTokens} done`);
       console.log(`   Accounts: ${doneAccounts}/${totalAccounts} done`);
-      const resume = await promptResume();
-      if (resume) {
+      const shouldResume = await promptResume();
+      if (shouldResume) {
         checkpoint = existing;
         console.log(`\n▶️  Resuming from checkpoint...`);
       } else {
