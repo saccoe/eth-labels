@@ -12,6 +12,7 @@
     "lint": "eslint . --fix --cache",
     "build": "bun run tsc",
     "pull": "bun run scripts/fetch-all.ts",
+    "export": "bun run scripts/db/generate-db-json.ts",
     "prepare": "husky || true",
     "tsc": "tsc -p tsconfig.json",
     "postversion": "git push --follow-tags",

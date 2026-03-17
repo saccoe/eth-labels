@@ -45,7 +45,7 @@ tableConfig.forEach((table) => {
 
     console.log(`Exported ${tableName} to CSV at "${csvFilePath}"`);
   } else {
-    throw new Error(`Table ${tableName} is empty`);
+    console.warn(`⚠️  Table ${tableName} is empty — skipping export`);
   }
 });
 

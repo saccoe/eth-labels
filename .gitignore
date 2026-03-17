@@ -11,3 +11,10 @@ yarn.lock
 # MCP server build artifacts
 mcp/dist
 mcp/node_modules
+
+# Scraper runtime files
+data/tmp/
+
+# Generated exports — use `bun run export` to regenerate
+data/csv/
+data/json/

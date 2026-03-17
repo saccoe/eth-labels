@@ -11,8 +11,8 @@ export class ProgressBar {
     );
   }
 
-  public start(total: number) {
-    this.bar.start(total, 0);
+  public start(total: number, startValue = 0) {
+    this.bar.start(total, startValue);
   }
 
   public step() {
