@@ -1,5 +1,45 @@
+import { spawn } from "child_process";
+import { homedir } from "os";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import { z } from "zod";
+
+const CHROME_BIN =
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const CDP_PORT = 9222;
+
+function getChromeUserDataDir(): string {
+  const raw = process.env["CHROME_USER_DATA_DIR"] ?? "~/.chrome-eth-labels";
+  return raw.startsWith("~") ? raw.replace("~", homedir()) : raw;
+}
+
+async function isChromeRunning(): Promise<boolean> {
+  try {
+    const resp = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`);
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function launchChrome(): Promise<void> {
+  const userDataDir = getChromeUserDataDir();
+  console.log(`  🚀 Launching Chrome with profile: ${userDataDir}`);
+  spawn(
+    CHROME_BIN,
+    [`--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${userDataDir}`],
+    {
+      detached: true,
+      stdio: "ignore",
+    },
+  ).unref();
+
+  // Wait until CDP is accepting connections
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    if (await isChromeRunning()) return;
+  }
+  throw new Error("Chrome launched but CDP did not become available");
+}
 
 /**
  * BrowserFetcher - Makes HTTP requests through a real Chrome browser via CDP.
@@ -21,6 +61,10 @@ export class BrowserFetcher {
    * Connect to a running Chrome instance and prepare for fetching.
    */
   public async init(): Promise<void> {
+    if (!(await isChromeRunning())) {
+      await launchChrome();
+    }
+
     const endpoints = [
       "http://127.0.0.1:18800/json/version", // Clawdbot managed browser
       "http://127.0.0.1:9222/json/version", // Standard Chrome DevTools
