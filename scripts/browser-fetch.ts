@@ -155,6 +155,40 @@ export class BrowserFetcher {
   }
 
   /**
+   * Fetch a URL using only page.evaluate(fetch(...)) — no navigation fallback.
+   * Use this for cross-origin API calls (e.g. api-v2.solscan.io called from solscan.io)
+   * where falling back to page.goto would trigger Cloudflare on the API domain.
+   */
+  public async fetchFromPageContext(url: string): Promise<string> {
+    if (!this.#page || !this.#ready)
+      throw new Error("BrowserFetcher not initialized");
+
+    let result: { status: number; text: string };
+    try {
+      result = await this.#page.evaluate(async (fetchUrl: string) => {
+        const res = await fetch(fetchUrl);
+        return { status: res.status, text: await res.text() };
+      }, url);
+    } catch (e) {
+      if (this.#isConnectionError(e)) {
+        await this.#reconnect();
+        result = await this.#page.evaluate(async (fetchUrl: string) => {
+          const res = await fetch(fetchUrl);
+          return { status: res.status, text: await res.text() };
+        }, url);
+      } else {
+        throw e;
+      }
+    }
+
+    if (result.status !== 200) {
+      throw new Error(`fetchFromPageContext: HTTP ${result.status} for ${url}`);
+    }
+
+    return result.text;
+  }
+
+  /**
    * POST JSON through the browser (for token API calls).
    */
   public async postJson(url: string, body: string): Promise<string> {

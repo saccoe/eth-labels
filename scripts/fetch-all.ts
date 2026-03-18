@@ -1,7 +1,8 @@
 import "dotenv/config";
 import { BrowserFetcher } from "./browser-fetch";
 import { ChainPuller } from "./ChainPuller";
-import { getChainConfig } from "./cli";
+import { getChainConfig, SOLSCAN_SENTINEL } from "./cli";
+import { SolscanPuller } from "./SolscanPuller";
 import { parseError } from "./utils/error-parse";
 
 void (async () => {
@@ -11,12 +12,16 @@ void (async () => {
     await browserFetcher.init();
 
     const config = await getChainConfig();
-    const chainsToPull = config.chains;
 
     // Process chains sequentially to avoid overwhelming the browser tab
-    for (const chain of chainsToPull) {
-      const chainPuller = await ChainPuller.init(chain, browserFetcher);
-      await chainPuller.pullAndWriteAllLabels();
+    for (const chain of config.chains) {
+      if (chain === SOLSCAN_SENTINEL) {
+        const puller = new SolscanPuller(browserFetcher);
+        await puller.pullAndWriteAllLabels();
+      } else {
+        const chainPuller = await ChainPuller.init(chain, browserFetcher);
+        await chainPuller.pullAndWriteAllLabels();
+      }
     }
 
     console.log("\n🎉 All done!");

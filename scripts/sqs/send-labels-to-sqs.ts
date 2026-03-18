@@ -43,6 +43,7 @@ const CHAIN_INTERNAL_NAMES: Record<number, string> = {
   8453: "base",
   42161: "arb",
   42220: "celo",
+  900: "sol",
 };
 
 // Dune blockchain names used in labels[].metadata.blockchain
@@ -53,6 +54,7 @@ const CHAIN_DUNE_NAMES: Record<number, string> = {
   137: "polygon",
   8453: "base",
   42161: "arbitrum",
+  900: "solana",
 };
 
 function chainNameForId(chainId: number): string {
@@ -65,7 +67,11 @@ async function main() {
   const sender = new SqsSender(SOURCE);
 
   const { chains: selectedChains } = await getChainConfig();
-  const chainIds = [...new Set(selectedChains.map((c) => c.chainId))];
+  const chainIds = [
+    ...new Set(
+      selectedChains.map((c): number => (c === "solscan" ? 900 : c.chainId)),
+    ),
+  ];
 
   const allAccounts = (
     await Promise.all(
