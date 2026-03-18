@@ -161,21 +161,45 @@ export class BrowserFetcher {
     if (!this.#page || !this.#ready)
       throw new Error("BrowserFetcher not initialized");
 
-    const result = await this.#page.evaluate(
-      async (fetchUrl: string, fetchBody: string) => {
-        const res = await fetch(fetchUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Requested-With": "XMLHttpRequest",
+    let result: { status: number; text: string };
+    try {
+      result = await this.#page.evaluate(
+        async (fetchUrl: string, fetchBody: string) => {
+          const res = await fetch(fetchUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Requested-With": "XMLHttpRequest",
+            },
+            body: fetchBody,
+          });
+          return { status: res.status, text: await res.text() };
+        },
+        url,
+        body,
+      );
+    } catch (e) {
+      if (this.#isConnectionError(e)) {
+        await this.#reconnect();
+        result = await this.#page!.evaluate(
+          async (fetchUrl: string, fetchBody: string) => {
+            const res = await fetch(fetchUrl, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Requested-With": "XMLHttpRequest",
+              },
+              body: fetchBody,
+            });
+            return { status: res.status, text: await res.text() };
           },
-          body: fetchBody,
-        });
-        return { status: res.status, text: await res.text() };
-      },
-      url,
-      body,
-    );
+          url,
+          body,
+        );
+      } else {
+        throw e;
+      }
+    }
 
     if (result.status !== 200 || result.text.includes("Just a moment...")) {
       throw new Error(
