@@ -93,7 +93,7 @@ export class SolscanPuller {
 
     return parsed.data.map((item) => ({
       address: item.address,
-      nameTag: accountsMeta[item.address].account_label ?? null,
+      nameTag: accountsMeta[item.address]?.account_label ?? null,
     }));
   }
 
