@@ -181,7 +181,7 @@ export class BrowserFetcher {
     } catch (e) {
       if (this.#isConnectionError(e)) {
         await this.#reconnect();
-        result = await this.#page!.evaluate(
+        result = await this.#page.evaluate(
           async (fetchUrl: string, fetchBody: string) => {
             const res = await fetch(fetchUrl, {
               method: "POST",
