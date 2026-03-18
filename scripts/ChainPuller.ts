@@ -171,6 +171,7 @@ export class ChainPuller {
 
   async #writeTokens(tokenRows: TokenRows, label: string) {
     const shouldSkipRpc = SECURITY_LABELS.has(label);
+    this.#progressBar.startLabel(label, tokenRows.length);
     for (const tokenRow of tokenRows) {
       let { name, symbol } = tokenRow;
 
@@ -200,6 +201,7 @@ export class ChainPuller {
         console.log("issue with token ", newToken);
         console.warn(e);
       }
+      this.#progressBar.stepAddress();
     }
   }
 
@@ -222,6 +224,7 @@ export class ChainPuller {
   }
 
   async #writeAccounts(accountRows: AccountRows, label: string) {
+    this.#progressBar.startLabel(label, accountRows.length);
     for (const accountRow of accountRows) {
       const newAccount = {
         chainId: this.#chain.chainId,
@@ -235,6 +238,7 @@ export class ChainPuller {
         console.warn("issue inserting account ", newAccount);
         console.warn(e);
       }
+      this.#progressBar.stepAddress();
     }
   }
 
