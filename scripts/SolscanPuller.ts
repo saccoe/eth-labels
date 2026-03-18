@@ -89,7 +89,8 @@ export class SolscanPuller {
       `/label-cloud/detail?tag=${encodeURIComponent(tag)}&type=${type}`,
     );
     const parsed = labelDetailSchema.parse(raw);
-    const accountsMeta = parsed.metadata?.accounts ?? {};
+    const accountsMeta: Partial<Record<string, { account_label?: string }>> =
+      parsed.metadata?.accounts ?? {};
 
     return parsed.data.map((item) => ({
       address: item.address,
