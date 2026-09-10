@@ -1,7 +1,8 @@
 import "dotenv/config";
 import { BrowserFetcher } from "./browser-fetch";
 import { ChainPuller } from "./ChainPuller";
-import { getChainConfig } from "./cli";
+import { getChainConfig, SOLSCAN_SENTINEL } from "./cli";
+import { SolscanPuller } from "./SolscanPuller";
 import { parseError } from "./utils/error-parse";
 
 void (async () => {
@@ -11,13 +12,19 @@ void (async () => {
     await browserFetcher.init();
 
     const config = await getChainConfig();
-    const chainsToPull = config.chains;
 
     // Process chains sequentially to avoid overwhelming the browser tab
-    for (const chain of chainsToPull) {
-      await browserFetcher.setActiveOrigin(chain.website);
-      const chainPuller = await ChainPuller.init(chain, browserFetcher);
-      await chainPuller.pullAndWriteAllLabels();
+    for (const chain of config.chains) {
+      if (chain === SOLSCAN_SENTINEL) {
+        // SolscanPuller primes its own origin — solscan.io is not a *scan
+        // explorer and setActiveOrigin's /labelcloud probe does not apply.
+        const puller = new SolscanPuller(browserFetcher);
+        await puller.pullAndWriteAllLabels();
+      } else {
+        await browserFetcher.setActiveOrigin(chain.website);
+        const chainPuller = await ChainPuller.init(chain, browserFetcher);
+        await chainPuller.pullAndWriteAllLabels();
+      }
     }
 
     console.log("\n🎉 All done!");

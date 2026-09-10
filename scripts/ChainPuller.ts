@@ -1,5 +1,4 @@
-import { type Address, createPublicClient, erc20Abi, http } from "viem";
-import { mainnet } from "viem/chains";
+import { createPublicClient, erc20Abi, http, type Address } from "viem";
 import { z } from "zod";
 import type { ApiParser } from "./ApiParser/ApiParser";
 import type { BrowserFetcher } from "./browser-fetch";
@@ -10,6 +9,16 @@ import { TokensRepository } from "./db/repositories/TokensRepository";
 import { fetchHtml } from "./fetch-html";
 import type { HtmlParser } from "./HtmlParser/HtmlParser";
 import { ProgressBar } from "./ProgressBar";
+import { getRpcUrls } from "./rpc-config";
+import {
+  deleteCheckpoint,
+  loadCheckpoint,
+  markAccountDone,
+  markTokenDone,
+  promptResume,
+  saveCheckpoint,
+  type Checkpoint,
+} from "./ScrapeCheckpoint";
 import { sleep } from "./utils/sleep";
 
 type AllLabels = {
@@ -30,6 +39,18 @@ export type TokenRow = {
 };
 export type AccountRows = Array<AccountRow>;
 export type TokenRows = Array<TokenRow>;
+
+/**
+ * Labels where RPC metadata lookups are skipped.
+ * Addresses in these categories are the valuable data — name/symbol don't matter.
+ */
+const SECURITY_LABELS = new Set([
+  "spam",
+  "suspicious",
+  "phish-hack",
+  "heist",
+  "fake-icos",
+]);
 
 /**
  * Pulls and writes everything for a given chain
@@ -125,31 +146,36 @@ export class ChainPuller {
   async #fetchErc20Metadata(
     address: Address,
   ): Promise<{ name: string | null; symbol: string | null }> {
-    const rpcUrl = process.env.ETHEREUM_RPC;
-    if (!rpcUrl) return { name: null, symbol: null };
+    const rpcUrls = getRpcUrls(this.#chain.chainId);
 
-    const client = createPublicClient({
-      chain: mainnet,
-      transport: http(rpcUrl),
-    });
+    for (const rpcUrl of rpcUrls) {
+      try {
+        const client = createPublicClient({ transport: http(rpcUrl) });
+        const [name, symbol] = await Promise.all([
+          client
+            .readContract({ address, abi: erc20Abi, functionName: "name" })
+            .catch(() => null),
+          client
+            .readContract({ address, abi: erc20Abi, functionName: "symbol" })
+            .catch(() => null),
+        ]);
+        if (name || symbol)
+          return { name: name ?? null, symbol: symbol ?? null };
+      } catch {
+        // try next rpc
+      }
+    }
 
-    const [name, symbol] = await Promise.all([
-      client
-        .readContract({ address, abi: erc20Abi, functionName: "name" })
-        .catch(() => null),
-      client
-        .readContract({ address, abi: erc20Abi, functionName: "symbol" })
-        .catch(() => null),
-    ]);
-
-    return { name: name ?? null, symbol: symbol ?? null };
+    return { name: null, symbol: null };
   }
 
   async #writeTokens(tokenRows: TokenRows, label: string) {
+    const shouldSkipRpc = SECURITY_LABELS.has(label);
+    this.#progressBar.startLabel(label, tokenRows.length);
     for (const tokenRow of tokenRows) {
       let { name, symbol } = tokenRow;
 
-      if (!name || !symbol) {
+      if (!shouldSkipRpc && (!name || !symbol)) {
         const onChain = await this.#fetchErc20Metadata(tokenRow.address);
         name = name ?? onChain.name;
         symbol = symbol ?? onChain.symbol;
@@ -158,13 +184,6 @@ export class ChainPuller {
             `  ⛓️ Fetched on-chain metadata for ${tokenRow.address}: name=${name}, symbol=${symbol}`,
           );
         }
-      }
-
-      if (!name || !symbol) {
-        console.warn(
-          `  ⚠️ Skipping token ${tokenRow.address} — missing name=${name}, symbol=${symbol}`,
-        );
-        continue;
       }
 
       const newToken = {
@@ -182,34 +201,44 @@ export class ChainPuller {
         console.log("issue with token ", newToken);
         console.warn(e);
       }
+      this.#progressBar.stepAddress();
     }
   }
 
-  async #pullAllTokens(tokenUrls: Array<string>) {
+  async #pullAllTokens(
+    tokenUrls: Array<string>,
+    checkpoint: Checkpoint,
+    onProgress: (updated: Checkpoint) => void,
+  ) {
     for (const tokenUrl of tokenUrls) {
       const tokenRows = await this.#pullTokens(tokenUrl);
       const label = z.string().parse(tokenUrl.split("/").pop()?.split("?")[0]);
       await this.#writeTokens(tokenRows, label);
+      checkpoint = markTokenDone(checkpoint, tokenUrl);
+      onProgress(checkpoint);
       this.#progressBar.step();
       const randomWait = Math.floor(Math.random() * 500) + 500;
       await sleep(randomWait);
     }
+    return checkpoint;
   }
 
   async #writeAccounts(accountRows: AccountRows, label: string) {
+    this.#progressBar.startLabel(label, accountRows.length);
     for (const accountRow of accountRows) {
       const newAccount = {
         chainId: this.#chain.chainId,
         address: accountRow.address,
         label: label,
-        nameTag: accountRow.nameTag,
+        nameTag: accountRow.nameTag ?? "",
       };
       try {
         await AccountsRepository.insertAccount(newAccount);
       } catch (e) {
         console.warn("issue inserting account ", newAccount);
-        // console.log(e)
+        console.warn(e);
       }
+      this.#progressBar.stepAddress();
     }
   }
 
@@ -242,8 +271,12 @@ export class ChainPuller {
     return accountRows;
   }
 
-  async #pullAllAccounts(accounts: Array<string>) {
-    for (const accountUrl of accounts) {
+  async #pullAllAccounts(
+    accountUrls: Array<string>,
+    checkpoint: Checkpoint,
+    onProgress: (updated: Checkpoint) => void,
+  ) {
+    for (const accountUrl of accountUrls) {
       const randomWait = Math.floor(Math.random() * 1000) + 300;
       await sleep(randomWait);
       const accountRows = await this.#pullAccountStaging(accountUrl);
@@ -251,19 +284,96 @@ export class ChainPuller {
         .string()
         .parse(accountUrl.split("/").pop()?.split("?")[0]);
       await this.#writeAccounts(accountRows, label);
+      checkpoint = markAccountDone(checkpoint, accountUrl);
+      onProgress(checkpoint);
       this.#progressBar.step();
     }
+    return checkpoint;
   }
 
   public async pullAndWriteAllLabels() {
-    const labels = await this.#pullAllLabels();
-    console.log(`\n🐢 Pulling tokens...`);
-    this.#progressBar.start(labels.tokens.length);
-    await this.#pullAllTokens(labels.tokens);
+    const chainId = this.#chain.chainId;
+
+    // Check for an existing checkpoint
+    const existing = loadCheckpoint(chainId);
+    let checkpoint: Checkpoint;
+
+    if (existing) {
+      const doneTokens = existing.completedTokenUrls.length;
+      const doneAccounts = existing.completedAccountUrls.length;
+      const totalTokens = existing.tokenUrls.length;
+      const totalAccounts = existing.accountUrls.length;
+      console.log(
+        `\n⚠️  Found a checkpoint from ${existing.startedAt} for chain ${chainId}`,
+      );
+      console.log(`   Tokens:   ${doneTokens}/${totalTokens} done`);
+      console.log(`   Accounts: ${doneAccounts}/${totalAccounts} done`);
+      const shouldResume = await promptResume();
+      if (shouldResume) {
+        checkpoint = existing;
+        console.log(`\n▶️  Resuming from checkpoint...`);
+      } else {
+        deleteCheckpoint(chainId);
+        checkpoint = await this.#initCheckpoint(chainId);
+      }
+    } else {
+      checkpoint = await this.#initCheckpoint(chainId);
+    }
+
+    const completedTokenSet = new Set(checkpoint.completedTokenUrls);
+    const completedAccountSet = new Set(checkpoint.completedAccountUrls);
+    const remainingTokens = checkpoint.tokenUrls.filter(
+      (u) => !completedTokenSet.has(u),
+    );
+    const remainingAccounts = checkpoint.accountUrls.filter(
+      (u) => !completedAccountSet.has(u),
+    );
+
+    const onProgress = (updated: Checkpoint) => saveCheckpoint(updated);
+
+    console.log(`\n🐢 Pulling tokens... (${remainingTokens.length} remaining)`);
+    this.#progressBar.start(
+      checkpoint.tokenUrls.length,
+      checkpoint.completedTokenUrls.length,
+    );
+    checkpoint = await this.#pullAllTokens(
+      remainingTokens,
+      checkpoint,
+      onProgress,
+    );
     console.log(`\n✅ Tokens completed!`);
-    console.log(`\n🐢 Pulling accounts...`);
-    this.#progressBar.start(labels.accounts.length);
-    await this.#pullAllAccounts(labels.accounts);
+
+    console.log(
+      `\n🐢 Pulling accounts... (${remainingAccounts.length} remaining)`,
+    );
+    this.#progressBar.start(
+      checkpoint.accountUrls.length,
+      checkpoint.completedAccountUrls.length,
+    );
+    checkpoint = await this.#pullAllAccounts(
+      remainingAccounts,
+      checkpoint,
+      onProgress,
+    );
     console.log(`\n✅ Accounts completed!`);
+
+    deleteCheckpoint(chainId);
+    console.log(`\n🗑️  Checkpoint cleared.`);
+  }
+
+  async #initCheckpoint(chainId: number): Promise<Checkpoint> {
+    const scrapeStartedAt = new Date().toISOString();
+    console.log(`\n🕐 Scrape started at ${scrapeStartedAt}`);
+    const labels = await this.#pullAllLabels();
+    const checkpoint: Checkpoint = {
+      chainId,
+      startedAt: scrapeStartedAt,
+      tokenUrls: labels.tokens,
+      accountUrls: labels.accounts,
+      completedTokenUrls: [],
+      completedAccountUrls: [],
+    };
+    saveCheckpoint(checkpoint);
+    return checkpoint;
   }
 }

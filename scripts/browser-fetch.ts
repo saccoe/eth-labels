@@ -1,5 +1,11 @@
+import { homedir } from "os";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import { z } from "zod";
+
+function getChromeUserDataDir(): string {
+  const raw = process.env["CHROME_USER_DATA_DIR"] ?? "~/.chrome-eth-labels";
+  return raw.startsWith("~") ? raw.replace("~", homedir()) : raw;
+}
 
 /**
  * BrowserFetcher - Makes HTTP requests through a real Chrome browser via CDP.
@@ -53,10 +59,38 @@ export class BrowserFetcher {
       }
     }
 
+    const userDataDir = getChromeUserDataDir();
     throw new Error(
-      "No Chrome instance found. Start Clawdbot or launch Chrome with:\n" +
-        "  /Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=9222 --user-data-dir=/tmp/chrome-devtools-eth-labels",
+      "No Chrome instance found. Launch Chrome in a separate terminal with:\n" +
+        `  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --remote-debugging-port=9222 --user-data-dir="${userDataDir}"`,
     );
+  }
+
+  #requirePage(): Page {
+    if (!this.#page) throw new Error("BrowserFetcher not initialized");
+    return this.#page;
+  }
+
+  #isConnectionError(e: unknown): boolean {
+    const msg = e instanceof Error ? e.message : String(e);
+    return (
+      msg.includes("detached") ||
+      msg.includes("Target closed") ||
+      msg.includes("Session closed")
+    );
+  }
+
+  /**
+   * Rebuild the CDP connection after Chrome drops it mid-scrape.
+   * Clears the primed origin so the caller's re-prime actually re-runs.
+   */
+  async #reconnect(): Promise<void> {
+    console.log("  🔄 Browser connection lost — reconnecting...");
+    this.#ready = false;
+    this.#page = null;
+    this.#browser = null;
+    this.#activeOrigin = null;
+    await this.init();
   }
 
   /**
@@ -64,21 +98,21 @@ export class BrowserFetcher {
    * Must be called when switching chains (different explorer domains).
    */
   public async setActiveOrigin(originOrUrl: string): Promise<void> {
-    if (!this.#page) throw new Error("BrowserFetcher not initialized");
+    const page = this.#requirePage();
 
     const origin = new URL(originOrUrl).origin;
     if (this.#activeOrigin === origin) return;
 
     console.log(`  🔐 Establishing Cloudflare clearance for ${origin}...`);
-    await this.#page.goto(`${origin}/labelcloud`, {
+    await page.goto(`${origin}/labelcloud`, {
       waitUntil: "networkidle2",
       timeout: 60000,
     });
 
-    const title = await this.#page.title();
+    const title = await page.title();
     if (title.includes("Just a moment")) {
       console.log("  ⏳ Solving Cloudflare challenge...");
-      await this.#page.waitForFunction(
+      await page.waitForFunction(
         () => !document.title.includes("Just a moment"),
         { timeout: 30000 },
       );
@@ -90,11 +124,20 @@ export class BrowserFetcher {
   }
 
   /**
+   * Re-establish the connection and re-prime `origin`, then hand back a
+   * usable page. Only call this after #isConnectionError has matched.
+   */
+  async #recoverTo(origin: string): Promise<Page> {
+    await this.#reconnect();
+    await this.setActiveOrigin(origin);
+    return this.#requirePage();
+  }
+
+  /**
    * Fetch HTML content through the browser.
    */
   public async fetchHtml(url: string): Promise<string> {
-    if (!this.#page || !this.#ready)
-      throw new Error("BrowserFetcher not initialized");
+    if (!this.#ready) throw new Error("BrowserFetcher not initialized");
 
     const origin = new URL(url).origin;
     if (this.#activeOrigin !== origin) {
@@ -103,34 +146,74 @@ export class BrowserFetcher {
 
     // Navigation-based fetch is slower than page.evaluate(fetch), but far more
     // reliable across explorers and Cloudflare policies.
-    await this.#page.goto(url, { waitUntil: "networkidle2", timeout: 60000 });
+    let page = this.#requirePage();
+    try {
+      await page.goto(url, { waitUntil: "networkidle2", timeout: 60000 });
+    } catch (e) {
+      if (!this.#isConnectionError(e)) throw e;
+      page = await this.#recoverTo(origin);
+      await page.goto(url, { waitUntil: "networkidle2", timeout: 60000 });
+    }
 
-    const title = await this.#page.title();
+    const title = await page.title();
     if (title.includes("Just a moment")) {
-      await this.#page.waitForFunction(
+      await page.waitForFunction(
         () => !document.title.includes("Just a moment"),
         { timeout: 30000 },
       );
       await new Promise((r) => setTimeout(r, 1500));
     }
 
-    return await this.#page.content();
+    return await page.content();
+  }
+
+  /**
+   * Fetch a URL using only page.evaluate(fetch(...)) — no navigation fallback.
+   * Use this for cross-origin API calls (e.g. api-v2.solscan.io called from
+   * solscan.io) where falling back to page.goto would trigger Cloudflare on
+   * the API domain. The caller is responsible for priming the *page* origin
+   * (via setActiveOrigin) that is allowed to call this API.
+   */
+  public async fetchFromPageContext(url: string): Promise<string> {
+    if (!this.#ready) throw new Error("BrowserFetcher not initialized");
+
+    const evaluateFetch = (page: Page) =>
+      page.evaluate(async (fetchUrl: string) => {
+        const res = await fetch(fetchUrl);
+        return { status: res.status, text: await res.text() };
+      }, url);
+
+    let result: { status: number; text: string };
+    try {
+      result = await evaluateFetch(this.#requirePage());
+    } catch (e) {
+      if (!this.#isConnectionError(e)) throw e;
+      // Preserve whichever origin the page was on — that is what makes this
+      // cross-origin call allowed.
+      const origin = this.#activeOrigin ?? new URL(url).origin;
+      result = await evaluateFetch(await this.#recoverTo(origin));
+    }
+
+    if (result.status !== 200) {
+      throw new Error(`fetchFromPageContext: HTTP ${result.status} for ${url}`);
+    }
+
+    return result.text;
   }
 
   /**
    * POST JSON through the browser (for token API calls).
    */
   public async postJson(url: string, body: string): Promise<string> {
-    if (!this.#page || !this.#ready)
-      throw new Error("BrowserFetcher not initialized");
+    if (!this.#ready) throw new Error("BrowserFetcher not initialized");
 
     const origin = new URL(url).origin;
     if (this.#activeOrigin !== origin) {
       await this.setActiveOrigin(origin);
     }
 
-    const attemptPost = async () =>
-      this.#page!.evaluate(
+    const attemptPost = (page: Page) =>
+      page.evaluate(
         async (fetchUrl: string, fetchBody: string) => {
           const res = await fetch(fetchUrl, {
             method: "POST",
@@ -146,11 +229,21 @@ export class BrowserFetcher {
         body,
       );
 
-    let result = await attemptPost();
+    const postWithReconnect = async () => {
+      try {
+        return await attemptPost(this.#requirePage());
+      } catch (e) {
+        if (!this.#isConnectionError(e)) throw e;
+        return await attemptPost(await this.#recoverTo(origin));
+      }
+    };
+
+    let result = await postWithReconnect();
     if (result.status !== 200 || result.text.includes("Just a moment...")) {
       // Re-prime once and retry the POST.
+      this.#activeOrigin = null;
       await this.setActiveOrigin(origin);
-      result = await attemptPost();
+      result = await postWithReconnect();
     }
 
     if (result.status !== 200 || result.text.includes("Just a moment...")) {
@@ -167,23 +260,20 @@ export class BrowserFetcher {
    * Use this when fetch() gets blocked — full page navigation always works.
    */
   public async navigateAndGetHtml(url: string): Promise<string> {
-    if (!this.#page || !this.#ready)
-      throw new Error("BrowserFetcher not initialized");
+    const page = this.#requirePage();
 
-    await this.#page.goto(url, { waitUntil: "networkidle2", timeout: 60000 });
+    await page.goto(url, { waitUntil: "networkidle2", timeout: 60000 });
+    this.#activeOrigin = new URL(url).origin;
 
-    // Wait for Cloudflare if needed
-    const title = await this.#page.title();
+    const title = await page.title();
     if (title.includes("Just a moment")) {
-      await this.#page.waitForFunction(
+      await page.waitForFunction(
         () => !document.title.includes("Just a moment"),
         { timeout: 30000 },
       );
-      // Wait for content to load after challenge
-      await new Promise((r) => setTimeout(r, 2000));
     }
 
-    return await this.#page.content();
+    return await page.content();
   }
 
   /**

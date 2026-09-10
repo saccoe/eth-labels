@@ -14,7 +14,7 @@ import {
 import type { Chain } from "./Chain/Chain";
 import type { AccountRows } from "./ChainPuller";
 import { CheerioParser } from "./CheerioParser";
-import { getChainConfig } from "./cli";
+import { getChainConfig, SOLSCAN_SENTINEL } from "./cli";
 import { AccountsRepository } from "./db/repositories/AccountsRepository";
 import { fetchHtml } from "./fetch-html";
 import type { HtmlParser } from "./HtmlParser/HtmlParser";
@@ -377,7 +377,12 @@ void (async () => {
     await browserFetcher.init();
 
     const config = await getChainConfig();
-    for (const chain of config.chains) {
+    // The CEX flow is *scan-explorer only; Solscan has no equivalent label
+    // pipeline, so drop the sentinel if the selection included it.
+    const evmChains = config.chains.filter(
+      (chain) => chain !== SOLSCAN_SENTINEL,
+    );
+    for (const chain of evmChains) {
       await browserFetcher.setActiveOrigin(chain.website);
       await pullCexForChain(chain, browserFetcher, options);
     }

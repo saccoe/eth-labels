@@ -10,6 +10,7 @@ export class AccountsRepository {
     "accounts.label",
     "accounts.nameTag",
   ] as const;
+
   public static selectAllAccounts() {
     return db
       .selectFrom("accounts")
@@ -18,6 +19,7 @@ export class AccountsRepository {
       .orderBy("accounts.label asc")
       .execute();
   }
+
   public static selectAccountsByLabel(label: string) {
     return db
       .selectFrom("accounts")
@@ -25,6 +27,7 @@ export class AccountsRepository {
       .where("label", "=", label)
       .execute();
   }
+
   public static selectAccountsByObj(
     accountSearchOptions: AccountSearchOptions,
   ) {
@@ -42,6 +45,15 @@ export class AccountsRepository {
     return query.execute();
   }
 
+  public static selectAccountsByChainId(chainId: number) {
+    return db
+      .selectFrom("accounts")
+      .select(this.allColumns)
+      .where("chainId", "=", chainId)
+      .orderBy("accounts.label asc")
+      .execute();
+  }
+
   public static selectAccountsByAddress(address: Address) {
     return db
       .selectFrom("accounts")
@@ -49,6 +61,7 @@ export class AccountsRepository {
       .where("address", "=", address.toLowerCase() as Address)
       .execute();
   }
+
   public static selectAllLabels = async () => {
     const allRows = await db
       .selectFrom("accounts")
@@ -60,7 +73,17 @@ export class AccountsRepository {
   };
 
   public static insertAccount(newAccount: NewAccount) {
-    return db.insertInto("accounts").values(newAccount).execute();
+    return db
+      .insertInto("accounts")
+      .values(newAccount)
+      .onConflict((oc) =>
+        oc
+          .column("chainId")
+          .column("address")
+          .column("label")
+          .doUpdateSet({ updated_at: new Date().toISOString() }),
+      )
+      .execute();
   }
 
   public static async computeLastModifiedDate(chainId: number) {
@@ -73,9 +96,6 @@ export class AccountsRepository {
     return z.string().parse(result?.latest_updated_at);
   }
 
-  /**
-   * Multi-insert accounts
-   */
   public static async insertAccounts(newAccounts: Array<NewAccount>) {
     const MAX_ROW_INSERT_LENGTH = 1_000;
     let remainingRows = newAccounts;
@@ -89,9 +109,8 @@ export class AccountsRepository {
           oc
             .column("chainId")
             .column("address")
-            .column("nameTag")
             .column("label")
-            .doNothing(),
+            .doUpdateSet({ updated_at: new Date().toISOString() }),
         )
         .execute();
     } while (remainingRows.length > 0);

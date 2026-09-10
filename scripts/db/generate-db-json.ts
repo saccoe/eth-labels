@@ -10,6 +10,11 @@ const dataFolderPath = path.join(__dirname, "..", "..", "data");
 const csvFolderPath = path.join(dataFolderPath, "csv");
 const jsonFolderPath = path.join(dataFolderPath, "json");
 
+// These are gitignored build artifacts, so they are absent on a fresh clone.
+for (const folder of [csvFolderPath, jsonFolderPath]) {
+  fs.mkdirSync(folder, { recursive: true });
+}
+
 const allTokens = await TokensRepository.selectAllTokens();
 const allAccounts = await AccountsRepository.selectAllAccounts();
 
@@ -45,7 +50,7 @@ tableConfig.forEach((table) => {
 
     console.log(`Exported ${tableName} to CSV at "${csvFilePath}"`);
   } else {
-    throw new Error(`Table ${tableName} is empty`);
+    console.warn(`⚠️  Table ${tableName} is empty — skipping export`);
   }
 });
 

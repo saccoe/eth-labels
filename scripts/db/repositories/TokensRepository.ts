@@ -13,6 +13,7 @@ export class TokensRepository {
     "tokens.website",
     "tokens.image",
   ] as const;
+
   public static selectAllTokens() {
     return db
       .selectFrom("tokens")
@@ -21,6 +22,7 @@ export class TokensRepository {
       .orderBy("tokens.label asc")
       .execute();
   }
+
   public static selectTokensByLabel(label: string) {
     return db
       .selectFrom("tokens")
@@ -28,6 +30,7 @@ export class TokensRepository {
       .where("label", "=", label)
       .execute();
   }
+
   public static selectTokensByAddress(address: Address) {
     return db
       .selectFrom("tokens")
@@ -53,6 +56,7 @@ export class TokensRepository {
       .where("symbol", "=", "")
       .execute();
   };
+
   public static selectMissingNames = () => {
     return db.selectFrom("tokens").selectAll().where("name", "=", "").execute();
   };
@@ -64,6 +68,7 @@ export class TokensRepository {
       .where("id", "=", id)
       .execute();
   }
+
   public static updateTokenName(id: number, name: string) {
     return db
       .updateTable("tokens")
@@ -73,7 +78,17 @@ export class TokensRepository {
   }
 
   public static insertToken(newToken: NewToken) {
-    return db.insertInto("tokens").values(newToken).execute();
+    return db
+      .insertInto("tokens")
+      .values(newToken)
+      .onConflict((oc) =>
+        oc
+          .column("chainId")
+          .column("address")
+          .column("label")
+          .doUpdateSet({ updated_at: new Date().toISOString() }),
+      )
+      .execute();
   }
 
   public static async computeLastModifiedDate(chainId: number) {
@@ -86,9 +101,6 @@ export class TokensRepository {
     return z.string().parse(result?.latest_updated_at);
   }
 
-  /**
-   * Multi-insert tokens
-   */
   public static async insertTokens(newTokens: Array<NewToken>) {
     const MAX_ROW_INSERT_LENGTH = 1_000;
     let remainingRows = newTokens;
@@ -99,7 +111,11 @@ export class TokensRepository {
         .insertInto("tokens")
         .values(rowsToInsert)
         .onConflict((oc) =>
-          oc.column("chainId").column("address").column("label").doNothing(),
+          oc
+            .column("chainId")
+            .column("address")
+            .column("label")
+            .doUpdateSet({ updated_at: new Date().toISOString() }),
         )
         .execute();
     } while (remainingRows.length > 0);

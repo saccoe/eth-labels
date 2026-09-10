@@ -1,57 +1,76 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { Address } from "viem";
+import { db } from "../database";
 import { AccountsRepository } from "./AccountsRepository";
 
+const TEST_ACCOUNTS = [
+  {
+    chainId: 1,
+    address: "0xabc0000000000000000000000000000000000001" as Address,
+    label: "coinbase",
+    nameTag: "Coinbase: Hot Wallet",
+  },
+  {
+    chainId: 1,
+    address: "0xabc0000000000000000000000000000000000002" as Address,
+    label: "coinbase",
+    nameTag: "Coinbase: Cold Wallet",
+  },
+  {
+    chainId: 1,
+    address: "0xabc0000000000000000000000000000000000003" as Address,
+    label: "binance",
+    nameTag: "Binance: Hot Wallet",
+  },
+  {
+    chainId: 137,
+    address: "0xabc0000000000000000000000000000000000001" as Address,
+    label: "coinbase",
+    nameTag: "Coinbase Polygon",
+  },
+];
+
+beforeEach(async () => {
+  for (const row of TEST_ACCOUNTS) {
+    await db
+      .insertInto("accounts")
+      .values(row)
+      .onConflict((oc) => oc.doNothing())
+      .execute();
+  }
+});
+
+afterEach(async () => {
+  await db.deleteFrom("accounts").where("address", "like", "0xabc%").execute();
+});
+
 describe("AccountsRepository", () => {
-  test("selectAllAccounts", async () => {
-    const accountRows = await AccountsRepository.selectAllAccounts();
-    expect(accountRows.length).toBeGreaterThanOrEqual(68_055);
-    expect(accountRows).toContainEqual({
-      chainId: 1,
-      address: "0x4f86d1d365434bfbc1e818534d353ffc1a06f8fe",
-      label: "coinbase",
-      nameTag: "Coinbase: Deposit Funder 12",
-    });
+  test("selectAllAccounts returns rows", async () => {
+    const rows = await AccountsRepository.selectAllAccounts();
+    expect(rows.length).toBeGreaterThanOrEqual(TEST_ACCOUNTS.length);
   });
-  test("selectAccountsByLabel", async () => {
-    const label = "coinbase";
-    const accountRows = await AccountsRepository.selectAccountsByLabel(label);
-    expect(accountRows.length).toBeGreaterThan(130);
-    expect(accountRows.length).toBeLessThan(150);
-    expect(accountRows).toContainEqual({
-      chainId: 1,
-      address: "0x4f86d1d365434bfbc1e818534d353ffc1a06f8fe",
-      label: "coinbase",
-      nameTag: "Coinbase: Deposit Funder 12",
-    });
+
+  test("selectAccountsByLabel filters by label", async () => {
+    const rows = await AccountsRepository.selectAccountsByLabel("coinbase");
+    expect(rows.every((r) => r.label === "coinbase")).toBe(true);
+    expect(rows.length).toBeGreaterThanOrEqual(3); // 2 on ETH + 1 on Polygon
   });
 
   describe("selectAccountsByAddress", () => {
-    test("null address multiple response", async () => {
-      const address = "0x0000000000000000000000000000000000000000";
-      const accountRows =
-        await AccountsRepository.selectAccountsByAddress(address);
-      expect(accountRows.length).toBeGreaterThan(7);
-      expect(accountRows).toContainEqual({
-        address: "0x0000000000000000000000000000000000000000",
-        chainId: 1,
-        label: "blocked",
-        nameTag: "Null: 0x000...000",
-      });
-    });
-    test("finds coinbase address case-insensitively across chains", async () => {
-      const address = "0xb8487eed31cf5c559bf3f4edd166b949553d0d11";
-      const accountRows = await AccountsRepository.selectAccountsByAddress(
-        address.toUpperCase() as Address, // ensures we ignore casing in search
+    test("returns all chains for same address", async () => {
+      const rows = await AccountsRepository.selectAccountsByAddress(
+        "0xabc0000000000000000000000000000000000001",
       );
-      // Same address can appear on multiple chains after multi-chain pulls.
-      expect(accountRows.length).toBeGreaterThanOrEqual(1);
-      expect(accountRows).toContainEqual({
-        address: "0xb8487eed31cf5c559bf3f4edd166b949553d0d11",
-        chainId: 1,
-        label: "coinbase",
-        nameTag: "Coinbase Cold 10",
-      });
+      expect(rows.length).toBeGreaterThanOrEqual(2); // chain 1 + chain 137
+    });
+
+    test("case-insensitive address search", async () => {
+      const address = "0xabc0000000000000000000000000000000000002";
+      const rows = await AccountsRepository.selectAccountsByAddress(
+        address.toUpperCase() as Address,
+      );
+      expect(rows.length).toBeGreaterThanOrEqual(1);
+      expect(rows.every((r) => r.address === address)).toBe(true);
     });
   });
 });
