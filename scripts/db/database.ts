@@ -17,6 +17,14 @@ export const databasePath = path.resolve(
 console.log(`Loading SQLite from file "${databasePath}"`);
 // don't import database directly, use the "db" variable from kysely instead
 export const database = new SQLite(databasePath);
+
+// A scrape holds this database open for hours. Under the default rollback
+// journal a single concurrent reader — a progress query, the API, a sqlite3
+// shell — fails the writer immediately with SQLITE_BUSY, and those inserts
+// were being dropped mid-scrape. WAL lets readers run alongside the writer,
+// and the busy timeout makes the remaining contention wait rather than throw.
+database.exec("PRAGMA journal_mode = WAL");
+database.exec("PRAGMA busy_timeout = 10000");
 const dialect = new BunSqliteDialect({
   database,
 });

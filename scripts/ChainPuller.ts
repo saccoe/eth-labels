@@ -58,6 +58,18 @@ export type AccountRows = Array<AccountRow>;
 export type TokenRows = Array<TokenRow>;
 
 /**
+ * SQLITE_BUSY: another connection held the database. Under WAL with a busy
+ * timeout this should not happen, but if it does the write must not be
+ * swallowed — the page it belongs to is about to be checkpointed as done.
+ */
+function isDatabaseLocked(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("database is locked") || message.includes("SQLITE_BUSY")
+  );
+}
+
+/**
  * Etherscan renders at most 100 account rows per request; anything larger
  * returns its error page. Mirrors the token listing's page size.
  */
@@ -211,6 +223,7 @@ export class ChainPuller {
       try {
         await TokensRepository.insertToken(newToken);
       } catch (e) {
+        if (isDatabaseLocked(e)) throw e;
         console.log("issue with token ", newToken);
         console.warn(e);
       }
@@ -275,6 +288,10 @@ export class ChainPuller {
       try {
         await AccountsRepository.insertAccount(newAccount);
       } catch (e) {
+        // A locked database is transient and the row is recoverable, but the
+        // caller is about to advance the checkpoint past this page — so it has
+        // to fail rather than log and continue, or the rows are lost silently.
+        if (isDatabaseLocked(e)) throw e;
         console.warn("issue inserting account ", newAccount);
         console.warn(e);
       }
@@ -370,6 +387,12 @@ export class ChainPuller {
         console.log(`\n  ⏩ Resuming "${label}" from row ${start}`);
       }
 
+      // Past its last row a label does not always serve a short page or the
+      // error page: a capped label (ascendex stops at 1000) serves a full page
+      // of rows it has already returned, forever. Track what has been seen and
+      // stop when a page adds nothing, the same guard the token walk needs.
+      const seenAddresses = new Set<string>();
+
       for (;;) {
         const randomWait = Math.floor(Math.random() * 1000) + 300;
         await sleep(randomWait);
@@ -377,9 +400,15 @@ export class ChainPuller {
         const pageRows = await this.#pullAccountPage(accountUrl, start);
         if (pageRows === null) break;
 
+        const newRows = pageRows.filter(
+          (row) => !seenAddresses.has(row.address.toLowerCase()),
+        );
+        newRows.forEach((row) => seenAddresses.add(row.address.toLowerCase()));
+        if (newRows.length === 0) break;
+
         // Write before advancing the cursor: a block between the two costs a
         // repeated page, which the unique index absorbs, rather than lost rows.
-        await this.#writeAccounts(pageRows, label);
+        await this.#writeAccounts(newRows, label);
 
         start += ACCOUNT_PAGE_SIZE;
         checkpoint = setPageProgress(checkpoint, accountUrl, start);
