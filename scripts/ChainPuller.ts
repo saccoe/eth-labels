@@ -128,34 +128,29 @@ export class ChainPuller {
     return allLabels;
   }
 
-  async #pullTokens(tokenUrl: string) {
+  /**
+   * Navigate the token label page and read its subcategory ids off .nav-pills.
+   *
+   * This navigation is load-bearing beyond discovery: etherscan's token API
+   * rejects a POST issued from anywhere but the label page being queried.
+   */
+  async #discoverSubcatUrls(tokenUrl: string): Promise<Array<string>> {
     const tokenHtml = await fetchHtml(tokenUrl, this.#browserFetcher);
     this.#cheerioParser.loadHtml(tokenHtml);
     const navPills = this.#cheerioParser.querySelector(".nav-pills");
-    let subcatUrlsToPull: Array<string> = [];
-    if (navPills.length > 0) {
-      const anchors = navPills.find("li > a");
-      const subcatIds: Array<string> = anchors.toArray().map((anchor) => {
-        const subcatId = z
-          .string()
-          .parse(this.#cheerioParser.getAttr(anchor, "data-sub-category-id"));
-        return subcatId;
-      });
-      for (const subcatId of subcatIds) {
-        const subcatUrl = `${tokenUrl}&subcatid=${subcatId}`;
-        subcatUrlsToPull = [...subcatUrlsToPull, subcatUrl];
-      }
-    } else {
-      subcatUrlsToPull = [`${tokenUrl}&subcatid=0`];
-    }
-    let tokenRows: TokenRows = [];
-    for (const subcatUrl of subcatUrlsToPull) {
-      tokenRows = [
-        ...tokenRows,
-        ...(await this.#chain.apiPuller.fetchTokens(subcatUrl)),
-      ];
-    }
-    return tokenRows;
+    if (navPills.length === 0) return [`${tokenUrl}&subcatid=0`];
+
+    return navPills
+      .find("li > a")
+      .toArray()
+      .map(
+        (anchor) =>
+          `${tokenUrl}&subcatid=${z
+            .string()
+            .parse(
+              this.#cheerioParser.getAttr(anchor, "data-sub-category-id"),
+            )}`,
+      );
   }
 
   async #fetchErc20Metadata(
@@ -226,9 +221,34 @@ export class ChainPuller {
     onProgress: (updated: Checkpoint) => void,
   ) {
     for (const tokenUrl of tokenUrls) {
-      const tokenRows = await this.#pullTokens(tokenUrl);
       const label = z.string().parse(tokenUrl.split("/").pop()?.split("?")[0]);
-      await this.#writeTokens(tokenRows, label);
+
+      for (const subcatUrl of await this.#discoverSubcatUrls(tokenUrl)) {
+        // Resume mid-subcategory; everything before this offset is written.
+        const resumeFrom = getPageProgress(checkpoint, subcatUrl);
+        if (resumeFrom > 0) {
+          console.log(`\n  ⏩ Resuming "${label}" from row ${resumeFrom}`);
+        }
+        const startUrl = subcatUrl.replace(
+          /&start=\d+/,
+          `&start=${resumeFrom}`,
+        );
+
+        await this.#chain.apiPuller.fetchTokens(
+          startUrl,
+          async (rows, nextStart) => {
+            // Write before recording the cursor: a block in between repeats a
+            // page, which the unique index absorbs, rather than losing rows.
+            await this.#writeTokens(rows, label);
+            checkpoint = setPageProgress(checkpoint, subcatUrl, nextStart);
+            onProgress(checkpoint);
+          },
+        );
+
+        checkpoint = clearPageProgress(checkpoint, subcatUrl);
+        onProgress(checkpoint);
+      }
+
       checkpoint = markTokenDone(checkpoint, tokenUrl);
       onProgress(checkpoint);
       this.#progressBar.step();

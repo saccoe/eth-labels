@@ -132,7 +132,18 @@ export abstract class ApiParser {
     return tokens;
   }
 
-  public async fetchTokens(tokenUrl: string): Promise<TokenRows> {
+  /**
+   * Pull every page of a token subcategory.
+   *
+   * `onPage` is awaited after each page with the rows and the offset to resume
+   * from. ChainPuller uses it to write and checkpoint per page, so a Cloudflare
+   * block partway through a large label does not discard the pages already
+   * fetched. The starting offset is read from the url's `&start=` cursor.
+   */
+  public async fetchTokens(
+    tokenUrl: string,
+    onPage?: (rows: TokenRows, nextStart: number) => void | Promise<void>,
+  ): Promise<TokenRows> {
     const baseUrl = this.baseUrl;
     let tokens: TokenRows = [];
     let shouldKeepPulling = true;
@@ -234,7 +245,11 @@ export abstract class ApiParser {
       const tokenRows = this.convertToTokenRows(data);
       const filtered = this.filterResponse(tokenRows);
 
-      tokenUrl = `${tokenUrl.split("&start=")[0]}&start=${parseInt(start) + MAX_PAGE_LENGTH}&subcatid=${subcatId}`;
+      const nextStart = parseInt(start) + MAX_PAGE_LENGTH;
+      // Hand the page over before advancing, so the caller can make it durable.
+      await onPage?.(filtered, nextStart);
+
+      tokenUrl = `${tokenUrl.split("&start=")[0]}&start=${nextStart}&subcatid=${subcatId}`;
       tokens = [...tokens, ...filtered];
     }
     return tokens;

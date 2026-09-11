@@ -122,6 +122,78 @@ describe("EtherscanParser", () => {
   });
 });
 
+describe("fetchTokens onPage callback", () => {
+  const buildPage = (startIndex: number, rowCount: number) =>
+    JSON.stringify({
+      d: {
+        data: Array.from({ length: rowCount }, (_, i) => ({
+          tokenName: null,
+          website: null,
+          contractAddress: `<a data-bs-title="0x${(startIndex + i)
+            .toString(16)
+            .padStart(40, "0")}"></a>`,
+          marketCap: "$1.00",
+          holders: "2",
+        })),
+      },
+    });
+
+  const stubbedParser = (pages: Record<number, string>) => {
+    const parser = new EtherscanApiParser("https://etherscan.io");
+    parser.setBrowserFetcher({
+      postJson: (_url: string, body: string) => {
+        const { start } = z
+          .object({ dataTableModel: z.object({ start: z.number() }) })
+          .parse(JSON.parse(body)).dataTableModel;
+        return Promise.resolve(pages[start] ?? buildPage(start, 0));
+      },
+    } as unknown as BrowserFetcher);
+    return parser;
+  };
+
+  test("hands over each page with the offset to resume from", async () => {
+    const parser = stubbedParser({
+      0: buildPage(0, 100),
+      100: buildPage(100, 100),
+      200: buildPage(200, 30),
+    });
+
+    const seen: Array<{ rows: number; nextStart: number }> = [];
+    const tokens = await parser.fetchTokens(
+      "https://etherscan.io/tokens/label/defi?size=100&start=0&subcatid=0",
+      (rows, nextStart) => {
+        seen.push({ rows: rows.length, nextStart });
+      },
+    );
+
+    // every page is surfaced before the walk ends, each with the next cursor,
+    // so an interrupted scrape resumes from the last durable offset
+    expect(seen).toEqual([
+      { rows: 100, nextStart: 100 },
+      { rows: 100, nextStart: 200 },
+      { rows: 30, nextStart: 300 },
+    ]);
+    expect(tokens).toHaveLength(230);
+  });
+
+  test("resumes from the cursor on the url rather than restarting", async () => {
+    const parser = stubbedParser({ 200: buildPage(200, 40) });
+
+    const seen: Array<number> = [];
+    await parser.fetchTokens(
+      "https://etherscan.io/tokens/label/defi?size=100&start=200&subcatid=0",
+      (_rows, nextStart) => {
+        seen.push(nextStart);
+      },
+    );
+
+    // starts at 200, not 0, so the already-written pages are not refetched.
+    // The cursor advances by the page size rather than by rows returned; this
+    // page is short, so the walk ends and 300 is never requested.
+    expect(seen).toEqual([300]);
+  });
+});
+
 describe("parseFormattedNumber", () => {
   test("parses the API's formatted market cap and holder counts", () => {
     expect(parseFormattedNumber("$13,494,555,949.00")).toBe(13494555949);
