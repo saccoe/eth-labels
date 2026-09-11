@@ -212,6 +212,13 @@ export class BrowserFetcher {
       await this.setActiveOrigin(origin);
     }
 
+    // The page context is load-bearing: etherscan's token API returns a
+    // Cloudflare 403 for a POST issued from /labelcloud, and 200 for the same
+    // POST issued from the token label page the caller just navigated to.
+    // Never navigate away from it to "re-prime".
+    const pageUrl = this.#requirePage().url();
+    const canRestorePage = pageUrl.startsWith("http");
+
     const attemptPost = (page: Page) =>
       page.evaluate(
         async (fetchUrl: string, fetchBody: string) => {
@@ -234,15 +241,23 @@ export class BrowserFetcher {
         return await attemptPost(this.#requirePage());
       } catch (e) {
         if (!this.#isConnectionError(e)) throw e;
-        return await attemptPost(await this.#recoverTo(origin));
+        const page = await this.#recoverTo(origin);
+        // Put the page back where the POST has to originate from.
+        if (canRestorePage) {
+          await page.goto(pageUrl, {
+            waitUntil: "networkidle2",
+            timeout: 60000,
+          });
+        }
+        return await attemptPost(page);
       }
     };
 
     let result = await postWithReconnect();
     if (result.status !== 200 || result.text.includes("Just a moment...")) {
-      // Re-prime once and retry the POST.
-      this.#activeOrigin = null;
-      await this.setActiveOrigin(origin);
+      // Refresh Cloudflare state on the *current* page and retry once.
+      const page = this.#requirePage();
+      await page.reload({ waitUntil: "networkidle2", timeout: 60000 });
       result = await postWithReconnect();
     }
 
