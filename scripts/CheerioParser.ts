@@ -47,19 +47,12 @@ export class CheerioParser {
         console.log(`returning early because "${pathname}" is not a string`);
         return;
       }
-      const maxRecordsLength = 10_000;
-      const size = this.text(element);
-      const regex = /\((.*?)\)/;
-      const recordCount = Number(regex.exec(size)?.[1]);
-
-      if (pathname.includes("tokens")) {
+      // Etherscan caps both listings at 100 rows per request: larger sizes
+      // render its "unexpected error" page, which parses as zero rows and is
+      // indistinguishable from an empty label. Both listings page with a
+      // "start" cursor instead, advanced by ChainPuller.
+      if (pathname.includes("tokens") || pathname.includes("accounts")) {
         const href = `${pathname}?size=100&start=0`;
-        anchors = [...anchors, href];
-      } else if (
-        pathname.includes("accounts") &&
-        recordCount < maxRecordsLength
-      ) {
-        const href = `${pathname}?size=${maxRecordsLength}`;
         anchors = [...anchors, href];
       }
     });

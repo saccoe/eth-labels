@@ -46,6 +46,12 @@ export type AccountRows = Array<AccountRow>;
 export type TokenRows = Array<TokenRow>;
 
 /**
+ * Etherscan renders at most 100 account rows per request; anything larger
+ * returns its error page. Mirrors the token listing's page size.
+ */
+const ACCOUNT_PAGE_SIZE = 100;
+
+/**
  * Labels where RPC metadata lookups are skipped.
  * Addresses in these categories are the valuable data — name/symbol don't matter.
  */
@@ -247,32 +253,63 @@ export class ChainPuller {
     }
   }
 
-  async #pullAccountStaging(accountUrl: string) {
-    const accountHtml = await fetchHtml(accountUrl, this.#browserFetcher);
+  #parseAccountPage(accountHtml: string): AccountRows {
     this.#cheerioParser.loadHtml(accountHtml);
     const navPills = this.#cheerioParser.querySelector(".nav-pills");
+    if (navPills.length === 0) {
+      return this.#chain.htmlPuller.selectAllAccountAddresses(accountHtml, "0");
+    }
+    const subcatIds = navPills
+      .find("li > a")
+      .toArray()
+      .map((anchor) =>
+        z.string().parse(this.#cheerioParser.getAttr(anchor, "val")),
+      );
     let accountRows: AccountRows = [];
-    if (navPills.length > 0) {
-      const anchors = navPills.find("li > a");
-      const subcatIds: Array<string> = anchors.toArray().map((anchor) => {
-        const subcatId = z
-          .string()
-          .parse(this.#cheerioParser.getAttr(anchor, "val"));
-        return subcatId;
-      });
-      for (const subcatId of subcatIds) {
-        const subcatAccounts = this.#chain.htmlPuller.selectAllAccountAddresses(
+    for (const subcatId of subcatIds) {
+      accountRows = [
+        ...accountRows,
+        ...this.#chain.htmlPuller.selectAllAccountAddresses(
           accountHtml,
           subcatId,
-        );
-        accountRows = [...accountRows, ...subcatAccounts];
-      }
-    } else {
-      accountRows = this.#chain.htmlPuller.selectAllAccountAddresses(
-        accountHtml,
-        "0",
-      );
+        ),
+      ];
     }
+    return accountRows;
+  }
+
+  /**
+   * Walk an account label with the "start" cursor.
+   *
+   * Etherscan caps account listings at 100 rows per request — a larger size
+   * renders its "unexpected error" page, which parses as zero rows and looks
+   * exactly like an empty label. Pages are requested 100 at a time and the
+   * walk stops on a short page, on that error page (a label whose count is an
+   * exact multiple of 100 runs one request past the end), or when a page adds
+   * no new addresses.
+   */
+  async #pullAccountStaging(accountUrl: string) {
+    const [urlWithoutStart] = accountUrl.split("&start=");
+    let accountRows: AccountRows = [];
+    const seen = new Set<string>();
+
+    for (let start = 0; ; start += ACCOUNT_PAGE_SIZE) {
+      const pageUrl = `${urlWithoutStart}&start=${start}`;
+      const accountHtml = await fetchHtml(pageUrl, this.#browserFetcher);
+
+      if (accountHtml.includes("We encountered an unexpected error")) break;
+
+      const pageRows = this.#parseAccountPage(accountHtml);
+      const newRows = pageRows.filter((row) => !seen.has(row.address));
+      newRows.forEach((row) => seen.add(row.address));
+      accountRows = [...accountRows, ...newRows];
+
+      if (pageRows.length < ACCOUNT_PAGE_SIZE || newRows.length === 0) break;
+
+      const randomWait = Math.floor(Math.random() * 500) + 300;
+      await sleep(randomWait);
+    }
+
     return accountRows;
   }
 
