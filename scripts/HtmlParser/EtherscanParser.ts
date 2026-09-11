@@ -6,6 +6,7 @@ import type {
   TokenRow,
   TokenRows,
 } from "../ChainPuller";
+import { extractAddressFrom } from "./extract-address";
 import { HtmlParser } from "./HtmlParser";
 
 export class EtherscanHtmlParser extends HtmlParser {
@@ -27,14 +28,16 @@ export class EtherscanHtmlParser extends HtmlParser {
     parent.find("tr").each((index, tableRow) => {
       const tableCells = $(tableRow).find("td");
 
-      const anchorWithDataBsTitle = $(tableCells[0]).find("a[data-bs-title]");
+      const anchor = $(tableCells[0]).find("a[data-bs-title]");
+      const address = extractAddressFrom([
+        anchor.attr("data-bs-title"),
+        anchor.attr("href"),
+        anchor.text(),
+      ]);
+      if (!address) return;
 
-      const address = anchorWithDataBsTitle.attr("data-bs-title");
-      if (typeof address !== "string") {
-        return;
-      }
       const newAddressInfo: AccountRow = {
-        address: address.trim() as Address,
+        address,
         nameTag: $(tableCells[1]).text().trim(),
       };
 

@@ -7,35 +7,26 @@ import type {
   TokenRow,
   TokenRows,
 } from "../ChainPuller";
+import { extractAddressFrom } from "./extract-address";
 import { HtmlParser } from "./HtmlParser";
 
-const FULL_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
-
 /**
- * Prefer full addresses from attributes/href over truncated visible text
- * (newer *scan UIs render "0x1234...abcd" in the link text).
+ * Prefer full addresses from attributes over truncated visible text, and pull
+ * the address out of composite values: an account with a name tag renders as
+ * the tag, a newline, then the address in parentheses, which a whole-string
+ * match rejects.
  */
 function extractAddressFromAnchor(
   anchor: cheerio.Cheerio<Element>,
-): string | null {
-  const candidates = [
+): Address | null {
+  return extractAddressFrom([
     anchor.attr("data-bs-title"),
     anchor.attr("data-original-title"),
     anchor.attr("data-highlight-target"),
-    // Some explorers put the full address in a generic data attribute.
     anchor.attr("data"),
-    anchor.attr("href")?.match(/\/address\/(0x[a-fA-F0-9]{40})/i)?.[1],
-    anchor.text().trim(),
-  ];
-
-  for (const candidate of candidates) {
-    if (!candidate) continue;
-    const value = candidate.trim();
-    if (FULL_ADDRESS_RE.test(value)) {
-      return value.toLowerCase();
-    }
-  }
-  return null;
+    anchor.attr("href"),
+    anchor.text(),
+  ]);
 }
 
 export class OptimismHtmlParser extends HtmlParser {
@@ -54,7 +45,7 @@ export class OptimismHtmlParser extends HtmlParser {
       if (!address) return;
 
       const newAddressInfo: AccountRow = {
-        address: address as Address,
+        address,
         nameTag: $(tableCells[1]).text().trim(),
       };
 
@@ -87,7 +78,7 @@ export class OptimismHtmlParser extends HtmlParser {
         $(tableCells[5]).find("a").attr("data-original-title") || ""
       ).toLowerCase();
       const tokenRow: TokenRow = {
-        address: address as Address,
+        address,
         name: tokenName || "",
         symbol: tokenSymbol || "",
         website,
