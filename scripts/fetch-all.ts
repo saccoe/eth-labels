@@ -2,6 +2,7 @@ import "dotenv/config";
 import { BrowserFetcher } from "./browser-fetch";
 import { ChainPuller } from "./ChainPuller";
 import { getChainConfig, SOLSCAN_SENTINEL } from "./cli";
+import { ensureSignedIn } from "./ensure-signed-in";
 import { SolscanPuller } from "./SolscanPuller";
 import { parseError } from "./utils/error-parse";
 
@@ -22,6 +23,7 @@ void (async () => {
         await puller.pullAndWriteAllLabels();
       } else {
         await browserFetcher.setActiveOrigin(chain.website);
+        await ensureSignedIn(browserFetcher, chain.website);
         const chainPuller = await ChainPuller.init(chain, browserFetcher);
         await chainPuller.pullAndWriteAllLabels();
       }
