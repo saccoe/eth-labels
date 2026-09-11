@@ -20,6 +20,14 @@ const CheckpointSchema = z.object({
    * field existed still load.
    */
   pageProgress: z.record(z.string(), z.number()).default({}),
+  /**
+   * Labels that could not be read at all. A label removed from etherscan
+   * redirects to an unrelated page rather than erroring, which the page
+   * classifier correctly refuses to treat as an empty label — but one dead
+   * label must not abort the whole run, so it is recorded here and skipped.
+   * Defaulted so older checkpoints still load.
+   */
+  failedUrls: z.array(z.string()).default([]),
 });
 
 export type Checkpoint = z.infer<typeof CheckpointSchema>;
@@ -108,6 +116,12 @@ export function clearPageProgress(
   const pageProgress = { ...checkpoint.pageProgress };
   delete pageProgress[pageKey(labelUrl)];
   return { ...checkpoint, pageProgress };
+}
+
+/** Record a label that could not be read, so the run can move past it. */
+export function markFailed(checkpoint: Checkpoint, url: string): Checkpoint {
+  if (checkpoint.failedUrls.includes(url)) return checkpoint;
+  return { ...checkpoint, failedUrls: [...checkpoint.failedUrls, url] };
 }
 
 export function markAccountDone(

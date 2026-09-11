@@ -158,6 +158,7 @@ export class SolscanPuller {
       accountUrls,
       completedTokenUrls: [],
       pageProgress: {},
+      failedUrls: [],
       completedAccountUrls: [],
     };
     saveCheckpoint(checkpoint);

@@ -17,6 +17,7 @@ import {
   getPageProgress,
   loadCheckpoint,
   markAccountDone,
+  markFailed,
   markTokenDone,
   pageKey,
   promptResume,
@@ -397,7 +398,19 @@ export class ChainPuller {
         const randomWait = Math.floor(Math.random() * 1000) + 300;
         await sleep(randomWait);
 
-        const pageRows = await this.#pullAccountPage(accountUrl, start);
+        let pageRows: AccountRows | null;
+        try {
+          pageRows = await this.#pullAccountPage(accountUrl, start);
+        } catch (e) {
+          // A label removed from etherscan redirects to an unrelated page, so
+          // it can never be read and would abort every rerun at the same spot.
+          // Record it and move on rather than blocking the labels behind it.
+          console.warn(
+            `\n  ⚠️  Skipping "${label}": ${e instanceof Error ? e.message : String(e)}`,
+          );
+          checkpoint = markFailed(checkpoint, accountUrl);
+          break;
+        }
         if (pageRows === null) break;
 
         const newRows = pageRows.filter(
@@ -491,6 +504,15 @@ export class ChainPuller {
     );
     console.log(`\n✅ Accounts completed!`);
 
+    if (checkpoint.failedUrls.length > 0) {
+      console.warn(
+        `\n⚠️  ${checkpoint.failedUrls.length} label(s) could not be read and were skipped:`,
+      );
+      for (const url of checkpoint.failedUrls) {
+        console.warn(`   ${url}`);
+      }
+    }
+
     deleteCheckpoint(chainId);
     console.log(`\n🗑️  Checkpoint cleared.`);
   }
@@ -507,6 +529,7 @@ export class ChainPuller {
       completedTokenUrls: [],
       completedAccountUrls: [],
       pageProgress: {},
+      failedUrls: [],
     };
     saveCheckpoint(checkpoint);
     return checkpoint;

@@ -6,6 +6,7 @@ import {
   deleteCheckpoint,
   getPageProgress,
   loadCheckpoint,
+  markFailed,
   pageKey,
   saveCheckpoint,
   setPageProgress,
@@ -23,6 +24,7 @@ const baseCheckpoint = (): Checkpoint => ({
   completedTokenUrls: [],
   completedAccountUrls: [],
   pageProgress: {},
+  failedUrls: [],
 });
 
 afterEach(() => deleteCheckpoint(TEST_CHAIN_ID));
@@ -73,6 +75,25 @@ describe("page progress", () => {
   test("survives a save/load round trip, which is the point of resuming", () => {
     saveCheckpoint(setPageProgress(baseCheckpoint(), url, 500));
     expect(getPageProgress(loadCheckpoint(TEST_CHAIN_ID)!, url)).toBe(500);
+  });
+});
+
+describe("markFailed", () => {
+  const url = "https://etherscan.io/accounts/label/liqui.io?size=100&start=0";
+
+  test("records a label that could not be read", () => {
+    const cp = markFailed(baseCheckpoint(), url);
+    expect(cp.failedUrls).toEqual([url]);
+  });
+
+  test("does not record the same label twice", () => {
+    const cp = markFailed(markFailed(baseCheckpoint(), url), url);
+    expect(cp.failedUrls).toEqual([url]);
+  });
+
+  test("survives a save/load round trip", () => {
+    saveCheckpoint(markFailed(baseCheckpoint(), url));
+    expect(loadCheckpoint(TEST_CHAIN_ID)!.failedUrls).toEqual([url]);
   });
 });
 
