@@ -11,12 +11,16 @@ import type { HtmlParser } from "./HtmlParser/HtmlParser";
 import { ProgressBar } from "./ProgressBar";
 import { getRpcUrls } from "./rpc-config";
 import {
+  clearPageProgress,
   deleteCheckpoint,
+  getPageProgress,
   loadCheckpoint,
   markAccountDone,
   markTokenDone,
+  pageKey,
   promptResume,
   saveCheckpoint,
+  setPageProgress,
   type Checkpoint,
 } from "./ScrapeCheckpoint";
 import { sleep } from "./utils/sleep";
@@ -279,38 +283,19 @@ export class ChainPuller {
   }
 
   /**
-   * Walk an account label with the "start" cursor.
-   *
-   * Etherscan caps account listings at 100 rows per request — a larger size
-   * renders its "unexpected error" page, which parses as zero rows and looks
-   * exactly like an empty label. Pages are requested 100 at a time and the
-   * walk stops on a short page, on that error page (a label whose count is an
-   * exact multiple of 100 runs one request past the end), or when a page adds
-   * no new addresses.
+   * Fetch one page of an account label. Returns null when etherscan serves its
+   * error page, which is what a `start` past the end of the label looks like.
    */
-  async #pullAccountStaging(accountUrl: string) {
-    const [urlWithoutStart] = accountUrl.split("&start=");
-    let accountRows: AccountRows = [];
-    const seen = new Set<string>();
-
-    for (let start = 0; ; start += ACCOUNT_PAGE_SIZE) {
-      const pageUrl = `${urlWithoutStart}&start=${start}`;
-      const accountHtml = await fetchHtml(pageUrl, this.#browserFetcher);
-
-      if (accountHtml.includes("We encountered an unexpected error")) break;
-
-      const pageRows = this.#parseAccountPage(accountHtml);
-      const newRows = pageRows.filter((row) => !seen.has(row.address));
-      newRows.forEach((row) => seen.add(row.address));
-      accountRows = [...accountRows, ...newRows];
-
-      if (pageRows.length < ACCOUNT_PAGE_SIZE || newRows.length === 0) break;
-
-      const randomWait = Math.floor(Math.random() * 500) + 300;
-      await sleep(randomWait);
-    }
-
-    return accountRows;
+  async #pullAccountPage(
+    labelUrl: string,
+    start: number,
+  ): Promise<AccountRows | null> {
+    const html = await fetchHtml(
+      `${pageKey(labelUrl)}&start=${start}`,
+      this.#browserFetcher,
+    );
+    if (html.includes("We encountered an unexpected error")) return null;
+    return this.#parseAccountPage(html);
   }
 
   async #pullAllAccounts(
@@ -319,13 +304,35 @@ export class ChainPuller {
     onProgress: (updated: Checkpoint) => void,
   ) {
     for (const accountUrl of accountUrls) {
-      const randomWait = Math.floor(Math.random() * 1000) + 300;
-      await sleep(randomWait);
-      const accountRows = await this.#pullAccountStaging(accountUrl);
       const label = z
         .string()
         .parse(accountUrl.split("/").pop()?.split("?")[0]);
-      await this.#writeAccounts(accountRows, label);
+
+      // Resume mid-label. Everything before this offset is already written.
+      let start = getPageProgress(checkpoint, accountUrl);
+      if (start > 0) {
+        console.log(`\n  ⏩ Resuming "${label}" from row ${start}`);
+      }
+
+      for (;;) {
+        const randomWait = Math.floor(Math.random() * 1000) + 300;
+        await sleep(randomWait);
+
+        const pageRows = await this.#pullAccountPage(accountUrl, start);
+        if (pageRows === null) break;
+
+        // Write before advancing the cursor: a block between the two costs a
+        // repeated page, which the unique index absorbs, rather than lost rows.
+        await this.#writeAccounts(pageRows, label);
+
+        start += ACCOUNT_PAGE_SIZE;
+        checkpoint = setPageProgress(checkpoint, accountUrl, start);
+        onProgress(checkpoint);
+
+        if (pageRows.length < ACCOUNT_PAGE_SIZE) break;
+      }
+
+      checkpoint = clearPageProgress(checkpoint, accountUrl);
       checkpoint = markAccountDone(checkpoint, accountUrl);
       onProgress(checkpoint);
       this.#progressBar.step();
@@ -414,6 +421,7 @@ export class ChainPuller {
       accountUrls: labels.accounts,
       completedTokenUrls: [],
       completedAccountUrls: [],
+      pageProgress: {},
     };
     saveCheckpoint(checkpoint);
     return checkpoint;

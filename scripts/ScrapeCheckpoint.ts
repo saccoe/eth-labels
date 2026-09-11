@@ -12,6 +12,14 @@ const CheckpointSchema = z.object({
   accountUrls: z.array(z.string()),
   completedTokenUrls: z.array(z.string()),
   completedAccountUrls: z.array(z.string()),
+  /**
+   * Progress *within* a label, as label URL (without its &start= cursor) to the
+   * next start offset to fetch. Large labels are hundreds of sequential
+   * requests, and a Cloudflare block partway through would otherwise discard
+   * every page fetched so far. Defaulted so checkpoints written before this
+   * field existed still load.
+   */
+  pageProgress: z.record(z.string(), z.number()).default({}),
 });
 
 export type Checkpoint = z.infer<typeof CheckpointSchema>;
@@ -56,6 +64,50 @@ export function markTokenDone(checkpoint: Checkpoint, url: string): Checkpoint {
     ...checkpoint,
     completedTokenUrls: [...checkpoint.completedTokenUrls, url],
   };
+}
+
+/**
+ * Strip only the pagination cursor, so a label has one stable progress key.
+ *
+ * Splitting on "&start=" would also discard anything after it — token URLs
+ * carry "&subcatid=N", and two subcategories of one label would then collide
+ * on the same key and resume at each other's offsets.
+ */
+export function pageKey(labelUrl: string): string {
+  return labelUrl.replace(/&start=\d+/, "");
+}
+
+/** Next start offset to fetch for a label; 0 when it has not been started. */
+export function getPageProgress(
+  checkpoint: Checkpoint,
+  labelUrl: string,
+): number {
+  return checkpoint.pageProgress[pageKey(labelUrl)] ?? 0;
+}
+
+/** Record that everything before `nextStart` is written and durable. */
+export function setPageProgress(
+  checkpoint: Checkpoint,
+  labelUrl: string,
+  nextStart: number,
+): Checkpoint {
+  return {
+    ...checkpoint,
+    pageProgress: {
+      ...checkpoint.pageProgress,
+      [pageKey(labelUrl)]: nextStart,
+    },
+  };
+}
+
+/** Drop a finished label's page cursor so the checkpoint stays small. */
+export function clearPageProgress(
+  checkpoint: Checkpoint,
+  labelUrl: string,
+): Checkpoint {
+  const pageProgress = { ...checkpoint.pageProgress };
+  delete pageProgress[pageKey(labelUrl)];
+  return { ...checkpoint, pageProgress };
 }
 
 export function markAccountDone(
