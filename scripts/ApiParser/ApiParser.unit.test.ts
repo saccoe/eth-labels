@@ -176,6 +176,52 @@ describe("fetchTokens onPage callback", () => {
     expect(tokens).toHaveLength(230);
   });
 
+  test("stops when the endpoint repeats a page instead of ending", async () => {
+    // Past the last row etherscan does not serve a short page: it serves a
+    // full 100 rows, identical for every further offset. Verified live against
+    // /tokens/label/bridged-token at start=2000 and start=2100. Ending the
+    // walk only on a short page loops forever, which burned ~50 requests on
+    // one label during a real scrape.
+    const firstPage = buildPage(0, 100);
+    const repeated = buildPage(100, 100);
+    const parser = stubbedParser({
+      0: firstPage,
+      100: repeated,
+      200: repeated,
+      300: repeated,
+      400: repeated,
+    });
+
+    const offsets: Array<number> = [];
+    const tokens = await parser.fetchTokens(
+      "https://etherscan.io/tokens/label/bridged-token?size=100&start=0&subcatid=0",
+      (_rows, nextStart) => {
+        offsets.push(nextStart);
+        if (offsets.length > 8) throw new Error("walk did not terminate");
+      },
+    );
+
+    // two distinct pages are taken, then the repeat ends the walk
+    expect(offsets).toEqual([100, 200]);
+    expect(tokens).toHaveLength(200);
+  });
+
+  test("does not hand the caller rows it has already seen", async () => {
+    const page = buildPage(0, 100);
+    const parser = stubbedParser({ 0: page, 100: page });
+
+    const handed: Array<number> = [];
+    await parser.fetchTokens(
+      "https://etherscan.io/tokens/label/defi?size=100&start=0&subcatid=0",
+      (rows) => {
+        handed.push(rows.length);
+      },
+    );
+
+    // the second page is entirely duplicate, so nothing is written twice
+    expect(handed).toEqual([100]);
+  });
+
   test("resumes from the cursor on the url rather than restarting", async () => {
     const parser = stubbedParser({ 200: buildPage(200, 40) });
 

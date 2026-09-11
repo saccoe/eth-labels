@@ -148,6 +148,11 @@ export abstract class ApiParser {
     let tokens: TokenRows = [];
     let shouldKeepPulling = true;
     const MAX_PAGE_LENGTH = 100;
+    // Past the last row this endpoint does not return a short page: it returns
+    // a full 100 rows, and the same 100 rows for every further offset. Relying
+    // on a short page to end the walk therefore loops forever. Track the
+    // addresses already seen and stop once a page contributes nothing new.
+    const seenAddresses = new Set<string>();
 
     while (shouldKeepPulling) {
       shouldKeepPulling = false;
@@ -245,12 +250,23 @@ export abstract class ApiParser {
       const tokenRows = this.convertToTokenRows(data);
       const filtered = this.filterResponse(tokenRows);
 
+      const newRows = filtered.filter(
+        (row) => !seenAddresses.has(row.address.toLowerCase()),
+      );
+      newRows.forEach((row) => seenAddresses.add(row.address.toLowerCase()));
+
+      if (newRows.length === 0) {
+        // The endpoint is repeating a page it has already served: the label is
+        // exhausted regardless of what the row count says.
+        break;
+      }
+
       const nextStart = parseInt(start) + MAX_PAGE_LENGTH;
       // Hand the page over before advancing, so the caller can make it durable.
-      await onPage?.(filtered, nextStart);
+      await onPage?.(newRows, nextStart);
 
       tokenUrl = `${tokenUrl.split("&start=")[0]}&start=${nextStart}&subcatid=${subcatId}`;
-      tokens = [...tokens, ...filtered];
+      tokens = [...tokens, ...newRows];
     }
     return tokens;
   }
