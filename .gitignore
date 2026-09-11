@@ -15,6 +15,10 @@ mcp/node_modules
 # Scraper runtime files
 data/tmp/
 
+# SQLite WAL sidecars — transient, checkpointed into db.sqlite3 before commit
+data/*.sqlite3-wal
+data/*.sqlite3-shm
+
 # Generated exports — use `bun run export` to regenerate
 data/csv/
 data/json/
