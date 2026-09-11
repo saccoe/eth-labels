@@ -4,6 +4,7 @@ import type { ApiParser } from "./ApiParser/ApiParser";
 import type { BrowserFetcher } from "./browser-fetch";
 import type { Chain } from "./Chain/Chain";
 import { CheerioParser } from "./CheerioParser";
+import { classifyAccountPage } from "./classify-account-page";
 import { AccountsRepository } from "./db/repositories/AccountsRepository";
 import { TokensRepository } from "./db/repositories/TokensRepository";
 import { fetchHtml } from "./fetch-html";
@@ -61,6 +62,12 @@ export type TokenRows = Array<TokenRow>;
  * returns its error page. Mirrors the token listing's page size.
  */
 const ACCOUNT_PAGE_SIZE = 100;
+
+/**
+ * How many times a page that is neither a results table nor the end-of-label
+ * error page is retried before the scrape gives up and raises.
+ */
+const ACCOUNT_PAGE_ATTEMPTS = 3;
 
 /**
  * Labels where RPC metadata lookups are skipped.
@@ -143,21 +150,9 @@ export class ChainPuller {
    */
   async #discoverSubcatUrls(tokenUrl: string): Promise<Array<string>> {
     const tokenHtml = await fetchHtml(tokenUrl, this.#browserFetcher);
-    this.#cheerioParser.loadHtml(tokenHtml);
-    const navPills = this.#cheerioParser.querySelector(".nav-pills");
-    if (navPills.length === 0) return [`${tokenUrl}&subcatid=0`];
-
-    return navPills
-      .find("li > a")
-      .toArray()
-      .map(
-        (anchor) =>
-          `${tokenUrl}&subcatid=${z
-            .string()
-            .parse(
-              this.#cheerioParser.getAttr(anchor, "data-sub-category-id"),
-            )}`,
-      );
+    const subcatIds = this.#selectSubcatIds(tokenHtml, "data-sub-category-id");
+    if (subcatIds.length === 0) return [`${tokenUrl}&subcatid=0`];
+    return subcatIds.map((id) => `${tokenUrl}&subcatid=${id}`);
   }
 
   async #fetchErc20Metadata(
@@ -203,14 +198,15 @@ export class ChainPuller {
         }
       }
 
+      // Spread the scraped row rather than listing columns: picking fields by
+      // hand silently dropped marketCap and holders when they were added.
+      // name and symbol are overridden because they may be RPC-backfilled.
       const newToken = {
+        ...tokenRow,
         chainId: this.#chain.chainId,
-        address: tokenRow.address,
         label: label,
         name,
         symbol,
-        website: tokenRow.website,
-        image: tokenRow.image,
       };
       try {
         await TokensRepository.insertToken(newToken);
@@ -268,9 +264,11 @@ export class ChainPuller {
   async #writeAccounts(accountRows: AccountRows, label: string) {
     this.#progressBar.startLabel(label, accountRows.length);
     for (const accountRow of accountRows) {
+      // Spread the scraped row rather than listing columns: picking fields by
+      // hand silently dropped balance and txnCount when they were added.
       const newAccount = {
+        ...accountRow,
         chainId: this.#chain.chainId,
-        address: accountRow.address,
         label: label,
         nameTag: accountRow.nameTag ?? "",
       };
@@ -284,18 +282,29 @@ export class ChainPuller {
     }
   }
 
-  #parseAccountPage(accountHtml: string): AccountRows {
-    this.#cheerioParser.loadHtml(accountHtml);
-    const navPills = this.#cheerioParser.querySelector(".nav-pills");
-    if (navPills.length === 0) {
-      return this.#chain.htmlPuller.selectAllAccountAddresses(accountHtml, "0");
-    }
-    const subcatIds = navPills
+  /**
+   * Read the subcategory ids off a label page.
+   *
+   * ".nav-pills" alone is not enough: the site's search-panel dropdown carries
+   * that class too, so it matches on every page. Anchors are kept only when
+   * they actually carry the id attribute, and an empty result means the label
+   * has no subcategories — which is currently true of every etherscan label.
+   */
+  #selectSubcatIds(html: string, attribute: string): Array<string> {
+    this.#cheerioParser.loadHtml(html);
+    return this.#cheerioParser
+      .querySelector(".nav-pills")
       .find("li > a")
       .toArray()
-      .map((anchor) =>
-        z.string().parse(this.#cheerioParser.getAttr(anchor, "val")),
-      );
+      .map((anchor) => this.#cheerioParser.getAttr(anchor, attribute))
+      .filter((id): id is string => typeof id === "string" && id.length > 0);
+  }
+
+  #parseAccountPage(accountHtml: string): AccountRows {
+    const subcatIds = this.#selectSubcatIds(accountHtml, "val");
+    if (subcatIds.length === 0) {
+      return this.#chain.htmlPuller.selectAllAccountAddresses(accountHtml, "0");
+    }
     let accountRows: AccountRows = [];
     for (const subcatId of subcatIds) {
       accountRows = [
@@ -310,19 +319,39 @@ export class ChainPuller {
   }
 
   /**
-   * Fetch one page of an account label. Returns null when etherscan serves its
-   * error page, which is what a `start` past the end of the label looks like.
+   * Fetch one page of an account label.
+   *
+   * Returns null only for a genuine end of the label, which etherscan signals
+   * with its error page. Any page that is neither that nor a results table —
+   * a Cloudflare interstitial, a 403, a truncated response — is retried and
+   * then raised. It must never be reported as an empty page: the caller stops
+   * on a short page and marks the label complete, so a blocked request would
+   * silently drop every remaining page and never retry it.
    */
   async #pullAccountPage(
     labelUrl: string,
     start: number,
   ): Promise<AccountRows | null> {
-    const html = await fetchHtml(
-      `${pageKey(labelUrl)}&start=${start}`,
-      this.#browserFetcher,
+    const url = `${pageKey(labelUrl)}&start=${start}`;
+
+    for (let attempt = 1; attempt <= ACCOUNT_PAGE_ATTEMPTS; attempt++) {
+      const html = await fetchHtml(url, this.#browserFetcher);
+
+      const kind = classifyAccountPage(html);
+      if (kind === "end") return null;
+      if (kind === "results") return this.#parseAccountPage(html);
+
+      console.warn(
+        `  ⚠️  Unrecognised page for ${url} (attempt ${attempt}/${ACCOUNT_PAGE_ATTEMPTS})`,
+      );
+      await sleep(attempt * 5_000);
+    }
+
+    throw new Error(
+      `Could not read ${url} after ${ACCOUNT_PAGE_ATTEMPTS} attempts — ` +
+        `refusing to treat it as the end of the label. Progress is ` +
+        `checkpointed; rerun to resume from row ${start}.`,
     );
-    if (html.includes("We encountered an unexpected error")) return null;
-    return this.#parseAccountPage(html);
   }
 
   async #pullAllAccounts(
