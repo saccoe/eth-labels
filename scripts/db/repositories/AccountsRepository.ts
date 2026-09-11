@@ -1,7 +1,30 @@
+import type {
+  ExpressionBuilder,
+  OnConflictDatabase,
+  OnConflictTables,
+} from "kysely";
 import type { Address } from "viem";
 import { z } from "zod";
 import { db } from "../database";
-import type { AccountSearchOptions, NewAccount } from "../types";
+import type { AccountSearchOptions, Database, NewAccount } from "../types";
+
+/**
+ * Columns refreshed when a rescrape hits an existing (chainId, address, label).
+ *
+ * balance and txn_count are point-in-time, so they must be rewritten for
+ * updated_at to date anything. nameTag is left alone: it is part of the
+ * scraped identity and a later response that omits it should not blank it.
+ */
+const refreshOnConflict = (
+  eb: ExpressionBuilder<
+    OnConflictDatabase<Database, "accounts">,
+    OnConflictTables<"accounts">
+  >,
+) => ({
+  updated_at: new Date().toISOString(),
+  balance: eb.ref("excluded.balance"),
+  txnCount: eb.ref("excluded.txnCount"),
+});
 
 export class AccountsRepository {
   private static allColumns = [
@@ -81,7 +104,7 @@ export class AccountsRepository {
           .column("chainId")
           .column("address")
           .column("label")
-          .doUpdateSet({ updated_at: new Date().toISOString() }),
+          .doUpdateSet(refreshOnConflict),
       )
       .execute();
   }
@@ -110,7 +133,7 @@ export class AccountsRepository {
             .column("chainId")
             .column("address")
             .column("label")
-            .doUpdateSet({ updated_at: new Date().toISOString() }),
+            .doUpdateSet(refreshOnConflict),
         )
         .execute();
     } while (remainingRows.length > 0);

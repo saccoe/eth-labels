@@ -1,6 +1,7 @@
 import * as cheerio from "cheerio";
 import type { Element } from "domhandler";
 import type { Address } from "viem";
+import { parseFormattedNumber } from "../ApiParser/ApiParser";
 import type {
   AccountRow,
   AccountRows,
@@ -9,6 +10,7 @@ import type {
 } from "../ChainPuller";
 import { extractAddressFrom } from "./extract-address";
 import { HtmlParser } from "./HtmlParser";
+import { parseBalance } from "./parse-balance";
 
 /**
  * Prefer full addresses from attributes over truncated visible text, and pull
@@ -47,6 +49,11 @@ export class OptimismHtmlParser extends HtmlParser {
       const newAddressInfo: AccountRow = {
         address,
         nameTag: $(tableCells[1]).text().trim(),
+        balance: parseBalance(
+          $(tableCells[2]).find("[data-bs-title]").attr("data-bs-title") ??
+            $(tableCells[2]).text(),
+        ),
+        txnCount: parseFormattedNumber($(tableCells[3]).text()),
       };
 
       addressesInfo = [...addressesInfo, newAddressInfo];

@@ -55,6 +55,8 @@ describe("gnosis", () => {
     expect(accountRows).toContainEqual({
       address: "0x9a1f491b86d09fc1484b5fab10041b189b60756b",
       nameTag: "Aave: Payloads Controller",
+      balance: "0",
+      txnCount: 16,
     });
   });
 });
@@ -82,6 +84,8 @@ describe("arbiscan", () => {
     expect(accountRows).toContainEqual({
       address: "0x2bb52f7779fa2a77be64e199c18bd6437801caac",
       nameTag: "Aave: Pull Rewards Transfer Strategy V3",
+      balance: "0",
+      txnCount: 0,
     });
   });
   test("should parse token addresses", () => {
@@ -145,6 +149,8 @@ describe("bscscan", () => {
     expect(accountRows).toContainEqual({
       address: "0x81dab25be86f78c30e49ae2a7e4de2dcf8036ea7",
       nameTag: "BSCswap: $US.Dollar",
+      balance: "0",
+      txnCount: 0,
     });
   });
   test("should parse token addresses", () => {
@@ -190,6 +196,8 @@ describe("celo", () => {
     expect(accountRows).toContainEqual({
       address: "0x50cb1a8fd27159686430c4e41ecc77d2179d32c0",
       nameTag: "Fake_Phishing9",
+      balance: "0",
+      txnCount: 0,
     });
   });
   test("should parse token addresses", () => {
@@ -243,6 +251,8 @@ describe("optimism", () => {
     expect(accountRows).toContainEqual({
       address: "0x76d3030728e52deb8848d5613abade88441cbc59",
       nameTag: "Aave: Wrapped Token Gateway V3",
+      balance: "0",
+      txnCount: 237911,
     });
   });
   test("should parse token addresses", () => {
@@ -282,6 +292,8 @@ describe("basescan", () => {
     expect(accountRows).toContainEqual({
       address: "0x9390b1735def18560c509e2d0bc090e9d6ba257a",
       nameTag: "Aave : Executor Lvl1",
+      balance: "0.01",
+      txnCount: 3,
     });
   });
   test("should parse token addresses", () => {
@@ -328,6 +340,8 @@ describe("etherscan", () => {
     expect(tokenRows).toContainEqual({
       address: "0x0e8ba001a821f3ce0734763d008c9d7c957f5852",
       nameTag: "AmadeusRelay",
+      balance: "1.00302525",
+      txnCount: 26,
     });
   });
   test("should parse token addresses", () => {

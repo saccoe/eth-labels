@@ -33,6 +33,13 @@ type AllLabels = {
 export type AccountRow = {
   address: Address;
   nameTag: string | null;
+  /**
+   * Native-currency balance as a decimal string, e.g. "0.016363656115590326".
+   * Point-in-time; dated by the row's updated_at.
+   */
+  balance: string | null;
+  /** Transaction count at scrape time; dated by the row's updated_at. */
+  txnCount: number | null;
 };
 export type TokenRow = {
   address: Address;

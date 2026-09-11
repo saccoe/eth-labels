@@ -1,12 +1,15 @@
 import * as cheerio from "cheerio";
 import type { Address } from "viem";
+import { parseFormattedNumber } from "../ApiParser/ApiParser";
 import type {
   AccountRow,
   AccountRows,
   TokenRow,
   TokenRows,
 } from "../ChainPuller";
+import { extractAddressFrom } from "./extract-address";
 import { HtmlParser } from "./HtmlParser";
+import { parseBalance } from "./parse-balance";
 
 export class BscscanHtmlParser extends HtmlParser {
   public selectAllAccountAddresses(html: string): AccountRows {
@@ -19,12 +22,22 @@ export class BscscanHtmlParser extends HtmlParser {
     parent.find("tr").each((index, tableRow) => {
       const tableCells = $(tableRow).find("td");
 
-      const anchorWithDataBsTitle = $(tableCells[0]).find("a > span");
+      const span = $(tableCells[0]).find("a > span");
+      const address = extractAddressFrom([
+        span.attr("data-highlight-target"),
+        $(tableCells[0]).find("a").attr("href"),
+        span.text(),
+      ]);
+      if (!address) return;
 
-      const address = anchorWithDataBsTitle.attr("data-highlight-target") || "";
       const newAddressInfo: AccountRow = {
-        address: address.trim().toLowerCase() as Address,
+        address,
         nameTag: $(tableCells[1]).text().trim(),
+        balance: parseBalance(
+          $(tableCells[2]).find("[data-bs-title]").attr("data-bs-title") ??
+            $(tableCells[2]).text(),
+        ),
+        txnCount: parseFormattedNumber($(tableCells[3]).text()),
       };
 
       addressesInfo = [...addressesInfo, newAddressInfo];
