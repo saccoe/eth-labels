@@ -73,6 +73,10 @@ export class EtherscanHtmlParser extends HtmlParser {
         name: tokenName || null,
         symbol: tokenSymbol || null,
         image: image || null,
+        // Market data comes from the API path (ApiParser.fetchTokens);
+        // these HTML token parsers are not on the live scrape path.
+        marketCap: null,
+        holders: null,
       };
 
       addressesInfo = [...addressesInfo, tokenRow];

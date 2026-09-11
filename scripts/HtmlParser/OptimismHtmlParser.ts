@@ -92,6 +92,10 @@ export class OptimismHtmlParser extends HtmlParser {
         symbol: tokenSymbol || "",
         website,
         image: null, // TODO: Add image parsing here
+        // Market data comes from the API path (ApiParser.fetchTokens);
+        // these HTML token parsers are not on the live scrape path.
+        marketCap: null,
+        holders: null,
       };
 
       addressesInfo = [...addressesInfo, tokenRow];

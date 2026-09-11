@@ -35,7 +35,12 @@ export type TokenRow = {
   name: string | null;
   symbol: string | null;
   website: string | null;
+  /** Absolute URL, e.g. https://etherscan.io/token/images/foo.svg */
   image: string | null;
+  /** Whole dollars at scrape time; dated by the row's updated_at. */
+  marketCap: number | null;
+  /** Holder count at scrape time; dated by the row's updated_at. */
+  holders: number | null;
 };
 export type AccountRows = Array<AccountRow>;
 export type TokenRows = Array<TokenRow>;

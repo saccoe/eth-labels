@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 import type { BrowserFetcher } from "../browser-fetch";
 import { FileUtilities } from "../FileSystem/FileSystem";
-import { tokenApiResponseSchema, type TokenApiResponse } from "./ApiParser";
+import {
+  parseFormattedNumber,
+  tokenApiResponseSchema,
+  type TokenApiResponse,
+} from "./ApiParser";
 import { EtherscanApiParser } from "./EtherscanApiParser";
 const fileUtilities = new FileUtilities(import.meta.url);
 
@@ -33,6 +37,8 @@ describe("EtherscanParser", () => {
       website: null,
       address: "0xec43e92046c1527586dfaf02031622c30af9a1d6",
       image: null,
+      marketCap: 0,
+      holders: 10,
     });
   });
 
@@ -47,14 +53,18 @@ describe("EtherscanParser", () => {
       symbol: "aENJ",
       website: "https://aave.com/atokens",
       address: "0xac6df26a590f08dcc95d5a4705ae8abbc88509ef",
-      image: "/token/images/Aave_aENJ_32.png",
+      image: "https://etherscan.io/token/images/Aave_aENJ_32.png",
+      marketCap: 0,
+      holders: 527,
     });
     expect(parsedTokens).toContainEqual({
       address: "0x05ec93c0365baaeabf7aeffb0972ea7ecdd39cf1",
-      image: "/token/images/Aave_aBAT_32.png",
+      image: "https://etherscan.io/token/images/Aave_aBAT_32.png",
       name: "Aave interest bearing BAT",
       symbol: "aBAT",
       website: "https://aave.com/atokens",
+      marketCap: 0,
+      holders: 336,
     });
   });
 
@@ -109,5 +119,23 @@ describe("EtherscanParser", () => {
     // all 120 rows are captured, none truncated at the 100-row page limit
     expect(tokens).toHaveLength(120);
     expect(new Set(tokens.map((token) => token.address)).size).toBe(120);
+  });
+});
+
+describe("parseFormattedNumber", () => {
+  test("parses the API's formatted market cap and holder counts", () => {
+    expect(parseFormattedNumber("$13,494,555,949.00")).toBe(13494555949);
+    expect(parseFormattedNumber("$183,387,023,644.00")).toBe(183387023644);
+    expect(parseFormattedNumber("15,784,457")).toBe(15784457);
+    expect(parseFormattedNumber("527")).toBe(527);
+    expect(parseFormattedNumber("$0.00")).toBe(0);
+  });
+
+  test("returns null for absent or non-numeric values", () => {
+    expect(parseFormattedNumber(null)).toBeNull();
+    expect(parseFormattedNumber(undefined)).toBeNull();
+    expect(parseFormattedNumber("")).toBeNull();
+    expect(parseFormattedNumber("-")).toBeNull();
+    expect(parseFormattedNumber("N/A")).toBeNull();
   });
 });

@@ -1,7 +1,35 @@
+import type {
+  ExpressionBuilder,
+  OnConflictDatabase,
+  OnConflictTables,
+} from "kysely";
 import type { Address } from "viem";
 import { z } from "zod";
 import { db } from "../database";
-import type { NewToken, TokenSearchOptions } from "../types";
+import type { Database, NewToken, TokenSearchOptions } from "../types";
+
+/**
+ * Columns refreshed when a rescrape hits an existing (chainId, address, label).
+ *
+ * market_cap and holders are point-in-time, so they must be rewritten for
+ * updated_at to mean anything; image is included because its stored form
+ * changed from a root-relative path to an absolute URL.
+ *
+ * name, symbol and website are deliberately NOT refreshed: symbol is
+ * backfilled on-chain by ChainPuller when the API omits it, and overwriting
+ * from a later response that lacks it would discard that work.
+ */
+const refreshOnConflict = (
+  eb: ExpressionBuilder<
+    OnConflictDatabase<Database, "tokens">,
+    OnConflictTables<"tokens">
+  >,
+) => ({
+  updated_at: new Date().toISOString(),
+  marketCap: eb.ref("excluded.marketCap"),
+  holders: eb.ref("excluded.holders"),
+  image: eb.ref("excluded.image"),
+});
 
 export class TokensRepository {
   private static allColumns = [
@@ -86,7 +114,7 @@ export class TokensRepository {
           .column("chainId")
           .column("address")
           .column("label")
-          .doUpdateSet({ updated_at: new Date().toISOString() }),
+          .doUpdateSet(refreshOnConflict),
       )
       .execute();
   }
@@ -115,7 +143,7 @@ export class TokensRepository {
             .column("chainId")
             .column("address")
             .column("label")
-            .doUpdateSet({ updated_at: new Date().toISOString() }),
+            .doUpdateSet(refreshOnConflict),
         )
         .execute();
     } while (remainingRows.length > 0);

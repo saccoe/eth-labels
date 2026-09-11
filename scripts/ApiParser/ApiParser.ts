@@ -14,6 +14,9 @@ export const tokenApiResponseSchema = z.object({
             tokenImage: z.string().optional(),
             website: z.string().nullable(),
             contractAddress: z.string(),
+            // Formatted by the API: "$13,494,555,949.00" and "15,784,457".
+            marketCap: z.string().nullish(),
+            holders: z.string().nullish(),
           })
           .passthrough(),
       ),
@@ -22,6 +25,20 @@ export const tokenApiResponseSchema = z.object({
 });
 
 export type TokenApiResponse = z.infer<typeof tokenApiResponseSchema>;
+
+/**
+ * Turn the API's display strings into numbers. "$13,494,555,949.00" becomes
+ * 13494555949 and "15,784,457" becomes 15784457. Returns null for absent or
+ * non-numeric values such as "-" and "".
+ */
+export function parseFormattedNumber(
+  value: string | null | undefined,
+): number | null {
+  if (!value) return null;
+  const cleaned = value.replace(/[$,\s]/g, "");
+  if (!/^-?\d+(\.\d+)?$/.test(cleaned)) return null;
+  return Math.round(Number(cleaned));
+}
 
 export abstract class ApiParser {
   protected readonly baseUrl: string;
@@ -90,7 +107,11 @@ export abstract class ApiParser {
 
       token.symbol = symbol === "" ? null : symbol;
       token.name = title === "" ? null : title;
-      token.image = tokenImage === "" ? null : tokenImage;
+      // The markup carries a root-relative src ("/token/images/foo.svg"), which
+      // is ambiguous once rows from several explorers share a table. Store the
+      // absolute URL against this parser's explorer instead.
+      token.image =
+        tokenImage === "" ? null : new URL(tokenImage, this.baseUrl).href;
       token.website = website === "" ? null : website;
       token.address = address as Address;
     });
@@ -103,7 +124,10 @@ export abstract class ApiParser {
       website: obj.website,
       address: obj.contractAddress as Address,
       symbol: null,
-      image: null, // TODO: Add image parsing here
+      // filterResponse fills this in from the tokenName markup.
+      image: null,
+      marketCap: parseFormattedNumber(obj.marketCap),
+      holders: parseFormattedNumber(obj.holders),
     }));
     return tokens;
   }

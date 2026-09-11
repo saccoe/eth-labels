@@ -12,6 +12,7 @@
     "lint": "eslint . --fix --cache",
     "build": "bun run tsc",
     "chrome": "bun run scripts/launch-chrome.ts",
+    "migrate": "bun run scripts/db/migrator.ts",
     "pull": "bun run scripts/fetch-all.ts",
     "pull:cex": "bun run scripts/fetch-cex.ts",
     "pull:cex:all": "bun run scripts/fetch-cex.ts --no-10k-limit",

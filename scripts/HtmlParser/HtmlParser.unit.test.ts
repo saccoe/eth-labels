@@ -97,6 +97,8 @@ describe("arbiscan", () => {
       symbol: "OHM",
       website: "https://www.olympusdao.finance/",
       image: null,
+      marketCap: null,
+      holders: null,
     });
     // abbreviated
     expect(tokenRows).toContainEqual({
@@ -105,6 +107,8 @@ describe("arbiscan", () => {
       symbol: "IDIA",
       website: "https://impossible.finance/",
       image: null,
+      marketCap: null,
+      holders: null,
     });
     // not abbreviated but tricky
     expect(tokenRows).toContainEqual({
@@ -113,6 +117,8 @@ describe("arbiscan", () => {
       symbol: "IDIA",
       website: "https://impossible.finance/",
       image: null,
+      marketCap: null,
+      holders: null,
     });
   });
 });
@@ -154,6 +160,8 @@ describe("bscscan", () => {
       symbol: "CGPT",
       website: "https://www.chaingpt.org/",
       image: null,
+      marketCap: null,
+      holders: null,
     });
     // abbreviated
     // expect(tokenRows).toContainEqual({
@@ -196,6 +204,8 @@ describe("celo", () => {
       symbol: "",
       website: "",
       image: null,
+      marketCap: null,
+      holders: null,
     });
     // this html has one extra row artificially added from
     // https://celoscan.io/tokens/label/bitfinex?subcatid=0&size=50&start=0&col=3&order=desc
@@ -205,6 +215,8 @@ describe("celo", () => {
       symbol: "USD₮",
       website: "https://tether.to/",
       image: null,
+      marketCap: null,
+      holders: null,
     });
   });
 });
@@ -245,6 +257,8 @@ describe("optimism", () => {
       symbol: "sAAVE",
       website: "https://synthetix.io/",
       image: null,
+      marketCap: null,
+      holders: null,
     });
   });
 });
@@ -282,6 +296,8 @@ describe("basescan", () => {
       symbol: "aBasUSDbC",
       website: "https://aave.com/",
       image: null,
+      marketCap: null,
+      holders: null,
     });
   });
 });
@@ -326,6 +342,8 @@ describe("etherscan", () => {
       symbol: "MKR",
       website: "https://makerdao.com/",
       image: "/token/images/mkr-etherscan-35.png",
+      marketCap: null,
+      holders: null,
     });
   });
 
